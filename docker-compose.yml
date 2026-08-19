@@ -61,7 +61,9 @@ services:
   worker:
     image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
     container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-worker
-    user: "1000:1000"
+    # No `user:` override — the image's entrypoint starts as root to fix
+    # mounted-volume ownership, then drops to appuser itself (see
+    # docker-entrypoint.sh). Forcing uid 1000 here would skip that step.
     command: celery -A backend.email_tasks worker --loglevel=info --concurrency=1
     restart: unless-stopped
     depends_on:
@@ -85,7 +87,12 @@ services:
   app:
     image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
     container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-app
-    user: "1000:1000"
+    # No `user:` override — the image's entrypoint starts as root to fix
+    # ownership on the bind-mounted uploads/data/backups volumes (Docker
+    # creates missing host bind-mount dirs as root:root, which otherwise
+    # blocks writes from the app), then drops to appuser itself before
+    # running gunicorn (see docker-entrypoint.sh). Forcing uid 1000 here
+    # would skip that fix-up step and reintroduce the permission error.
     restart: unless-stopped
     
     depends_on:
