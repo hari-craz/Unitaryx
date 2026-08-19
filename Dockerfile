@@ -40,9 +40,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Install minimal runtime dependencies (like curl for healthcheck and postgres client libraries)
+# gosu lets the entrypoint start as root (needed to fix mounted-volume
+# ownership) and then drop to appuser to actually run the app.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libpq5 \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy built wheels from builder stage and install them
@@ -60,13 +63,21 @@ COPY . /app
 # catch-all route (backend/app.py: DIST_DIR)
 COPY --from=frontend-builder /build/dist /app/frontend/app/dist
 
-# Setup directories and permissions
+# Setup directories and permissions (best-effort here — these paths are
+# bind-mounted at runtime in docker-compose.yml, which shadows this chown;
+# docker-entrypoint.sh re-applies it against the actual mounted volume on
+# every container start, so ownership is correct regardless of host setup)
 RUN mkdir -p /app/data /app/instance/db_backups \
     /app/frontend/static/uploads/founders /app/frontend/static/uploads/projects && \
     chown -R appuser:appuser /app
 
-# Switch to non-root user
-USER appuser
+# Container starts as root so the entrypoint can fix mounted-volume
+# ownership, then execs the app as appuser via gosu. Do not add `USER
+# appuser` here — it would run before the mount even exists and would be
+# overridden by docker-compose.yml's `user:` directive anyway.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 EXPOSE 10003
 
