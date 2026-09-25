@@ -30,7 +30,7 @@ services:
     
     # Preserve persistent volumes so data is not wiped on deployment
     volumes:
-      - ${DB_VOLUME_PATH:-./data/db}:/var/lib/postgresql/data
+      - ${DB_VOLUME_PATH:-/mnt/Deployments/Unitaryx/db}:/var/lib/postgresql/data
     
     logging:
       driver: "json-file"
@@ -57,7 +57,7 @@ services:
   redis:
     image: redis:7-alpine
     volumes:
-      - ${REDIS_VOLUME_PATH:-./data/redis}:/data
+      - ${REDIS_VOLUME_PATH:-/mnt/Deployments/Unitaryx/redis}:/data
     networks:
       - unitaryx_net
     deploy:
@@ -159,9 +159,9 @@ services:
       start_period: 40s
     
     volumes:
-      - ${APP_VOLUME_PATH:-./data/app}:/app/data
-      - ${APP_BACKUP_PATH:-./data/backups}:/app/instance/db_backups
-      - ${APP_UPLOADS_PATH:-./data/uploads}:/app/frontend/static/uploads
+      - ${APP_VOLUME_PATH:-/mnt/Deployments/Unitaryx/app}:/app/data
+      - ${APP_BACKUP_PATH:-/mnt/Deployments/Unitaryx/backups}:/app/instance/db_backups
+      - ${APP_UPLOADS_PATH:-/mnt/Deployments/Unitaryx/uploads}:/app/frontend/static/uploads
     
     logging:
       driver: "json-file"
@@ -178,6 +178,9 @@ services:
         condition: any
         delay: 5s
         window: 120s
+      placement:
+        constraints:
+          - ${APP_PLACEMENT_CONSTRAINT:-node.role == manager}
 
 # ════════════════════════════════════════════════════════════════════════════════
 # Docker Networks & Volumes
