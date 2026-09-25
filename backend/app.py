@@ -5499,9 +5499,43 @@ def _ensure_upload_dirs():
             app.logger.warning("Could not pre-create upload directory %s: %s", target, e)
 
 
+def _clean_orphaned_types():
+    """Drop orphaned types in PostgreSQL that block CREATE TABLE from running.
+    If an aborted DDL or race condition created a composite type in pg_type
+    without the corresponding table in pg_class, drop the orphaned type so
+    CREATE TABLE can proceed cleanly."""
+    try:
+        cleanup_sql = text("""
+            DO $$
+            DECLARE
+                r RECORD;
+            BEGIN
+                FOR r IN (
+                    SELECT t.typname
+                    FROM pg_type t
+                    JOIN pg_namespace n ON n.oid = t.typnamespace
+                    WHERE n.nspname = 'public'
+                      AND t.typtype = 'c'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM pg_class c
+                          WHERE c.relnamespace = t.typnamespace
+                            AND c.relname = t.typname
+                      )
+                ) LOOP
+                    EXECUTE format('DROP TYPE IF EXISTS public.%I CASCADE;', r.typname);
+                END LOOP;
+            END $$;
+        """)
+        with db.engine.begin() as conn:
+            conn.execute(cleanup_sql)
+    except Exception as e:
+        app.logger.warning("Could not pre-clean orphaned types: %s", e)
+
+
 def initialize_database():
     _ensure_upload_dirs()
     with app.app_context():
+        _clean_orphaned_types()
         try:
             db.create_all()
             _ensure_schema_columns()
