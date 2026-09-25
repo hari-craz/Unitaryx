@@ -79,16 +79,21 @@ services:
     # mounted-volume ownership, then drops to appuser itself (see
     # docker-entrypoint.sh). Forcing uid 1000 here would skip that step.
     command: celery -A backend.email_tasks worker --loglevel=info --concurrency=1
-    depends_on:
-      - redis
-      - db
-    env_file:
-      - .env.production # Optional: Portainer supports env files if they exist in repo, but it's better to use Portainer Env Vars.
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
       - CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=True
-      # Passthrough all other DB and SMTP env vars here if needed.
+      - POSTGRES_USER=${POSTGRES_USER:-unitaryx}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-unitaryx}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
     networks:
       - unitaryx_net
     deploy:
@@ -109,10 +114,6 @@ services:
     # blocks writes from the app), then drops to appuser itself before
     # running gunicorn (see docker-entrypoint.sh). Forcing uid 1000 here
     # would skip that fix-up step and reintroduce the permission error.
-    depends_on:
-      - db
-      - redis
-    
     # Let Portainer inject environment variables safely
     environment:
       TZ: ${TZ:-Asia/Kolkata}
