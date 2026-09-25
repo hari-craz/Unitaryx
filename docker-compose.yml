@@ -30,7 +30,7 @@ services:
     
     # Preserve persistent volumes so data is not wiped on deployment
     volumes:
-      - ${DB_VOLUME_PATH:-/mnt/Deployments/Unitaryx/db}:/var/lib/postgresql/data
+      - db_data:/var/lib/postgresql/data
     
     logging:
       driver: "json-file"
@@ -57,7 +57,7 @@ services:
   redis:
     image: redis:7-alpine
     volumes:
-      - ${REDIS_VOLUME_PATH:-/mnt/Deployments/Unitaryx/redis}:/data
+      - redis_data:/data
     networks:
       - unitaryx_net
     deploy:
@@ -159,9 +159,9 @@ services:
       start_period: 40s
     
     volumes:
-      - ${APP_VOLUME_PATH:-/mnt/Deployments/Unitaryx/app}:/app/data
-      - ${APP_BACKUP_PATH:-/mnt/Deployments/Unitaryx/backups}:/app/instance/db_backups
-      - ${APP_UPLOADS_PATH:-/mnt/Deployments/Unitaryx/uploads}:/app/frontend/static/uploads
+      - app_data:/app/data
+      - app_backups:/app/instance/db_backups
+      - app_uploads:/app/frontend/static/uploads
     
     logging:
       driver: "json-file"
@@ -190,4 +190,9 @@ networks:
     external: true
     name: unitary-x-net
 
-# Named volumes removed in favor of environment-routed bind mounts.
+volumes:
+  db_data:
+  redis_data:
+  app_data:
+  app_backups:
+  app_uploads:
