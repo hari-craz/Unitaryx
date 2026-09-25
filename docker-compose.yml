@@ -96,6 +96,8 @@ services:
       - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
     networks:
       - unitaryx_net
+    healthcheck:
+      disable: true
     deploy:
       replicas: 1
       restart_policy:
