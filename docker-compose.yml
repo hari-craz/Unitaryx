@@ -1,4 +1,4 @@
-# Production-ready GitOps Stack for Portainer
+# Production-ready GitOps Stack for Portainer (Docker Swarm)
 # Deployment Method: Portainer GitOps (Repository mode)
 
 services:
@@ -7,8 +7,6 @@ services:
   # ════════════════════════════════════════════════════════════════════════════════
   db:
     image: postgres:16-alpine
-    container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-db
-    restart: unless-stopped
     
     # Do not expose the DB to the host network in production for security.
     # If external access is required via Cloudflare Tunnel, it should route through the internal network.
@@ -43,29 +41,44 @@ services:
     networks:
       - unitaryx_net
 
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+      placement:
+        constraints:
+          - ${DB_PLACEMENT_CONSTRAINT:-node.role == manager}
+
   # ════════════════════════════════════════════════════════════════════════════════
   # Redis Service
   # ════════════════════════════════════════════════════════════════════════════════
   redis:
     image: redis:7-alpine
-    container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-redis
-    restart: unless-stopped
     volumes:
       - ${REDIS_VOLUME_PATH:-./data/redis}:/data
     networks:
       - unitaryx_net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+      placement:
+        constraints:
+          - ${REDIS_PLACEMENT_CONSTRAINT:-node.role == manager}
 
   # ════════════════════════════════════════════════════════════════════════════════
   # Celery Worker
   # ════════════════════════════════════════════════════════════════════════════════
   worker:
     image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
-    container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-worker
     # No `user:` override — the image's entrypoint starts as root to fix
     # mounted-volume ownership, then drops to appuser itself (see
     # docker-entrypoint.sh). Forcing uid 1000 here would skip that step.
     command: celery -A backend.email_tasks worker --loglevel=info --concurrency=1
-    restart: unless-stopped
     depends_on:
       - redis
       - db
@@ -78,21 +91,24 @@ services:
       # Passthrough all other DB and SMTP env vars here if needed.
     networks:
       - unitaryx_net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
 
   # ════════════════════════════════════════════════════════════════════════════════
   # Flask Application
   # ════════════════════════════════════════════════════════════════════════════════
   app:
     image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
-    container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-app
     # No `user:` override — the image's entrypoint starts as root to fix
     # ownership on the bind-mounted uploads/data/backups volumes (Docker
     # creates missing host bind-mount dirs as root:root, which otherwise
     # blocks writes from the app), then drops to appuser itself before
     # running gunicorn (see docker-entrypoint.sh). Forcing uid 1000 here
     # would skip that fix-up step and reintroduce the permission error.
-    restart: unless-stopped
-    
     depends_on:
       - db
       - redis
@@ -156,12 +172,20 @@ services:
     networks:
       - unitaryx_net
 
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+
 # ════════════════════════════════════════════════════════════════════════════════
 # Docker Networks & Volumes
 # ════════════════════════════════════════════════════════════════════════════════
 networks:
   unitaryx_net:
     name: ${COMPOSE_PROJECT_NAME:-unitaryx}-net
-    driver: bridge
+    driver: overlay
+    attachable: true
 
 # Named volumes removed in favor of environment-routed bind mounts.
