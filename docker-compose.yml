@@ -184,8 +184,7 @@ services:
 # ════════════════════════════════════════════════════════════════════════════════
 networks:
   unitaryx_net:
-    name: ${COMPOSE_PROJECT_NAME:-unitaryx}-net
-    driver: overlay
-    attachable: true
+    external: true
+    name: unitary-x-net
 
 # Named volumes removed in favor of environment-routed bind mounts.
