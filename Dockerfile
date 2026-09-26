@@ -85,5 +85,5 @@ EXPOSE 10003
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=40s \
     CMD curl -f http://127.0.0.1:10003/login || exit 1
 
-# Start application using Gunicorn (preload ensures DB initialization runs once before forking workers)
-CMD ["gunicorn", "--preload", "app:app", "--bind", "0.0.0.0:10003", "--workers", "2", "--threads", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-"]
+# Start application using Gunicorn
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:10003", "--workers", "2", "--threads", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-"]

@@ -1,4 +1,4 @@
-# Production-ready GitOps Stack for Portainer (Docker Swarm)
+# Production-ready GitOps Stack for Portainer
 # Deployment Method: Portainer GitOps (Repository mode)
 
 services:
@@ -7,6 +7,8 @@ services:
   # ════════════════════════════════════════════════════════════════════════════════
   db:
     image: postgres:16-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-db
+    restart: unless-stopped
     
     # Do not expose the DB to the host network in production for security.
     # If external access is required via Cloudflare Tunnel, it should route through the internal network.
@@ -30,7 +32,7 @@ services:
     
     # Preserve persistent volumes so data is not wiped on deployment
     volumes:
-      - db_data_v2:/var/lib/postgresql/data
+      - ${DB_VOLUME_PATH:-./data/db}:/var/lib/postgresql/data
     
     logging:
       driver: "json-file"
@@ -41,81 +43,64 @@ services:
     networks:
       - unitaryx_net
 
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: any
-        delay: 5s
-        window: 120s
-      placement:
-        constraints:
-          - ${DB_PLACEMENT_CONSTRAINT:-node.role == manager}
-
   # ════════════════════════════════════════════════════════════════════════════════
   # Redis Service
   # ════════════════════════════════════════════════════════════════════════════════
   redis:
     image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-redis
+    restart: unless-stopped
     volumes:
-      - redis_data:/data
+      - ${REDIS_VOLUME_PATH:-./data/redis}:/data
     networks:
       - unitaryx_net
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: any
-        delay: 5s
-        window: 120s
-      placement:
-        constraints:
-          - ${REDIS_PLACEMENT_CONSTRAINT:-node.role == manager}
 
   # ════════════════════════════════════════════════════════════════════════════════
   # Celery Worker
   # ════════════════════════════════════════════════════════════════════════════════
   worker:
     image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-worker
     # No `user:` override — the image's entrypoint starts as root to fix
     # mounted-volume ownership, then drops to appuser itself (see
     # docker-entrypoint.sh). Forcing uid 1000 here would skip that step.
     command: celery -A backend.email_tasks worker --loglevel=info --concurrency=1
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_started
+      db:
+        condition: service_healthy
+    env_file:
+      - .env.production # Optional: Portainer supports env files if they exist in repo, but it's better to use Portainer Env Vars.
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
       - CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=True
-      - POSTGRES_USER=${POSTGRES_USER:-unitaryx}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - DB_HOST=${DB_HOST:-db}
-      - DB_PORT=${DB_PORT:-5432}
-      - POSTGRES_DB=${POSTGRES_DB:-unitaryx}
-      - SMTP_HOST=${SMTP_HOST}
-      - SMTP_PORT=${SMTP_PORT}
-      - SMTP_USER=${SMTP_USER}
-      - SMTP_PASS=${SMTP_PASS}
-      - SMTP_FROM=${SMTP_FROM}
-      - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
+      # Passthrough all other DB and SMTP env vars here if needed.
     networks:
       - unitaryx_net
-    healthcheck:
-      disable: true
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: any
-        delay: 5s
-        window: 120s
 
   # ════════════════════════════════════════════════════════════════════════════════
   # Flask Application
   # ════════════════════════════════════════════════════════════════════════════════
   app:
     image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-app
     # No `user:` override — the image's entrypoint starts as root to fix
     # ownership on the bind-mounted uploads/data/backups volumes (Docker
     # creates missing host bind-mount dirs as root:root, which otherwise
     # blocks writes from the app), then drops to appuser itself before
     # running gunicorn (see docker-entrypoint.sh). Forcing uid 1000 here
     # would skip that fix-up step and reintroduce the permission error.
+    restart: unless-stopped
+    
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    
     # Let Portainer inject environment variables safely
     environment:
       TZ: ${TZ:-Asia/Kolkata}
@@ -162,9 +147,9 @@ services:
       start_period: 40s
     
     volumes:
-      - app_data:/app/data
-      - app_backups:/app/instance/db_backups
-      - app_uploads:/app/frontend/static/uploads
+      - ${APP_VOLUME_PATH:-./data/app}:/app/data
+      - ${APP_BACKUP_PATH:-./data/backups}:/app/instance/db_backups
+      - ${APP_UPLOADS_PATH:-./data/uploads}:/app/frontend/static/uploads
     
     logging:
       driver: "json-file"
@@ -175,27 +160,12 @@ services:
     networks:
       - unitaryx_net
 
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: any
-        delay: 5s
-        window: 120s
-      placement:
-        constraints:
-          - ${APP_PLACEMENT_CONSTRAINT:-node.role == manager}
-
 # ════════════════════════════════════════════════════════════════════════════════
 # Docker Networks & Volumes
 # ════════════════════════════════════════════════════════════════════════════════
 networks:
   unitaryx_net:
-    external: true
-    name: unitary-x-net
+    name: ${COMPOSE_PROJECT_NAME:-unitaryx}-net
+    driver: bridge
 
-volumes:
-  db_data_v2:
-  redis_data:
-  app_data:
-  app_backups:
-  app_uploads:
+# Named volumes removed in favor of environment-routed bind mounts.
