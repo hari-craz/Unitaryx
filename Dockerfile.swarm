@@ -1,0 +1,80 @@
+# Stage 1: Frontend build (Vite + React public site)
+FROM node:22-slim AS frontend-builder
+
+WORKDIR /build
+
+COPY frontend/app/package*.json ./
+RUN npm ci
+
+COPY frontend/app/ ./
+RUN npm run build
+
+
+# Stage 2: Python Builder
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build wheels for Python dependencies
+COPY requirements-docker.txt .
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /usr/src/app/wheels -r requirements-docker.txt
+
+
+# Stage 3: Swarm Final Production Image
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install minimal runtime dependencies:
+# - curl for external checks
+# - libpq5 for PostgreSQL
+# - gosu for dropping root privileges in docker-entrypoint.sh
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libpq5 \
+    gosu \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pre-built Python packages
+COPY --from=builder /usr/src/app/wheels /wheels
+COPY --from=builder /app/requirements-docker.txt .
+RUN pip install --no-cache /wheels/*
+
+# Create non-root application user
+RUN useradd -m -u 1000 appuser
+
+# Copy application source code
+COPY . /app
+
+# Copy built React frontend bundle
+COPY --from=frontend-builder /build/dist /app/frontend/app/dist
+
+# Setup stateful directories and ownership
+RUN mkdir -p /app/data /app/instance/db_backups \
+    /app/frontend/static/uploads/founders /app/frontend/static/uploads/projects && \
+    chown -R appuser:appuser /app
+
+# Entrypoint manages volume permissions and orchestrates DB/Redis availability checks
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["docker-entrypoint.sh"]
+
+EXPOSE 10003
+
+# NOTE for Swarm: Healthchecks are intentionally decoupled to the Compose/Stack file
+# (docker-compose.swarm.yml) so background workers using this image are not flagged
+# unhealthy by web HTTP probes.
+
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:10003", "--workers", "2", "--threads", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-"]

@@ -1,0 +1,214 @@
+# Production-ready Docker Swarm Stack for UnitaryX
+# Deployment Method: Docker Swarm (docker stack deploy -c docker-compose.swarm.yml unitaryx) or Portainer Swarm GitOps
+
+services:
+  # ════════════════════════════════════════════════════════════════════════════════
+  # PostgreSQL Database Service
+  # ════════════════════════════════════════════════════════════════════════════════
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-unitaryx}
+      POSTGRES_USER: ${POSTGRES_USER:-unitaryx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: ${POSTGRES_INITDB_ARGS:--c shared_buffers=256MB -c effective_cache_size=1GB}
+      TZ: ${TZ:-Asia/Kolkata}
+      PGTZ: ${TZ:-Asia/Kolkata}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-unitaryx} -d ${POSTGRES_DB:-unitaryx}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - unitaryx_net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+        failure_action: rollback
+      resources:
+        limits:
+          memory: 1024M
+        reservations:
+          memory: 256M
+
+  # ════════════════════════════════════════════════════════════════════════════════
+  # Redis Cache & Broker Service
+  # ════════════════════════════════════════════════════════════════════════════════
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - unitaryx_net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 64M
+
+  # ════════════════════════════════════════════════════════════════════════════════
+  # Celery Background Worker
+  # ════════════════════════════════════════════════════════════════════════════════
+  worker:
+    image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
+    command: celery -A backend.email_tasks worker --loglevel=info --concurrency=1
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      - CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=True
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-unitaryx}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-unitaryx}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
+      - SECRET_KEY=${SECRET_KEY}
+      - APP_URL=${APP_URL:-https://unitaryx.org}
+      - TZ=${TZ:-Asia/Kolkata}
+    # Disable web healthcheck inherited from Dockerfile (worker doesn't listen on HTTP 10003)
+    healthcheck:
+      disable: true
+    networks:
+      - unitaryx_net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # ════════════════════════════════════════════════════════════════════════════════
+  # Flask Web Application (Gunicorn)
+  # ════════════════════════════════════════════════════════════════════════════════
+  app:
+    image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+      DEBUG: ${DEBUG:-False}
+      SECRET_KEY: ${SECRET_KEY}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASS: ${ADMIN_PASS}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD}
+      SUPERADMIN_NAME: ${SUPERADMIN_NAME:-Super Admin}
+      APP_PORT: ${APP_PORT:-10003}
+      PORT: ${APP_PORT:-10003}
+      APP_URL: ${APP_URL:-https://unitaryx.org}
+
+      POSTGRES_USER: ${POSTGRES_USER:-unitaryx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-unitaryx}
+
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-True}
+
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_ALLOWED_ORIGINS: ${GOOGLE_ALLOWED_ORIGINS}
+
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
+      GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}
+
+    ports:
+      - target: 10003
+        published: ${APP_PORT:-10003}
+        protocol: tcp
+        mode: ingress
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:10003/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+    volumes:
+      - app_data:/app/data
+      - app_backups:/app/instance/db_backups
+      - app_uploads:/app/frontend/static/uploads
+
+    networks:
+      - unitaryx_net
+
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      resources:
+        limits:
+          memory: 1024M
+        reservations:
+          memory: 256M
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Networks & Persistent Volumes for Swarm
+# ════════════════════════════════════════════════════════════════════════════════
+networks:
+  unitaryx_net:
+    driver: overlay
+    attachable: true
+
+volumes:
+  db_data:
+  redis_data:
+  app_data:
+  app_backups:
+  app_uploads:
