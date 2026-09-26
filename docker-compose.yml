@@ -30,7 +30,7 @@ services:
     
     # Preserve persistent volumes so data is not wiped on deployment
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - db_data_v2:/var/lib/postgresql/data
     
     logging:
       driver: "json-file"
@@ -194,7 +194,7 @@ networks:
     name: unitary-x-net
 
 volumes:
-  db_data:
+  db_data_v2:
   redis_data:
   app_data:
   app_backups:
