@@ -83,7 +83,7 @@ services:
   # Celery Background Worker
   # ════════════════════════════════════════════════════════════════════════════════
   worker:
-    image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
+    image: ghcr.io/hari-craz/unitaryx:${APP_VERSION:-latest}
     command: celery -A backend.email_tasks worker --loglevel=info --concurrency=1
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
@@ -124,7 +124,7 @@ services:
   # Flask Web Application (Gunicorn)
   # ════════════════════════════════════════════════════════════════════════════════
   app:
-    image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
+    image: ghcr.io/hari-craz/unitaryx:${APP_VERSION:-latest}
     environment:
       TZ: ${TZ:-Asia/Kolkata}
       DEBUG: ${DEBUG:-False}

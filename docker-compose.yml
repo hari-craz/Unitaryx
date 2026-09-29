@@ -59,7 +59,7 @@ services:
   # Celery Worker
   # ════════════════════════════════════════════════════════════════════════════════
   worker:
-    image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
+    image: ghcr.io/hari-craz/unitaryx:${APP_VERSION:-latest}
     container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-worker
     # No `user:` override — the image's entrypoint starts as root to fix
     # mounted-volume ownership, then drops to appuser itself (see
@@ -85,7 +85,7 @@ services:
   # Flask Application
   # ════════════════════════════════════════════════════════════════════════════════
   app:
-    image: ghcr.io/unitary-x/unitaryx:${APP_VERSION:-latest}
+    image: ghcr.io/hari-craz/unitaryx:${APP_VERSION:-latest}
     container_name: ${COMPOSE_PROJECT_NAME:-unitaryx}-app
     # No `user:` override — the image's entrypoint starts as root to fix
     # ownership on the bind-mounted uploads/data/backups volumes (Docker
