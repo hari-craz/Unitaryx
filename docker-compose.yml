@@ -105,7 +105,7 @@ services:
     environment:
       TZ: ${TZ:-Asia/Kolkata}
       DEBUG: ${DEBUG:-False}
-      SECRET_KEY: ${SECRET_KEY}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASS: ${ADMIN_PASS}
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL}

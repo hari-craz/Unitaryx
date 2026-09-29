@@ -71,7 +71,13 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_port=1)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
-app.secret_key = os.getenv("SECRET_KEY", "fallback_weak_key_for_dev_only")
+_secret_key = (os.getenv("SECRET_KEY") or "").strip()
+if not _secret_key:
+    if (os.getenv("DEBUG", "False").strip().lower() == "true"):
+        _secret_key = "dev-only-insecure-secret-key"
+    else:
+        raise RuntimeError("SECRET_KEY must be set (only DEBUG=true may run without it).")
+app.secret_key = _secret_key
 PASSWORD_HASH_METHOD = (os.getenv("PASSWORD_HASH_METHOD") or "pbkdf2:sha256:260000").strip()
 
 _default_google_client_id = "your_google_client_id_here.apps.googleusercontent.com"
@@ -618,9 +624,14 @@ class Project(db.Model):
     display_order = db.Column(db.Integer, default=0)
     photo_url   = db.Column(db.String(300))
 
+    @property
+    def slug(self):
+        base = re.sub(r"[^a-z0-9]+", "-", (self.title or "").lower()).strip("-")[:60].strip("-")
+        return f"{base}-{self.id}" if base else str(self.id)
+
     def to_dict(self):
         return {
-            "id": self.id, "title": self.title,
+            "id": self.id, "title": self.title, "slug": self.slug,
             "description": self.description, "category": self.category,
             "tags": self.tags.split(",") if self.tags else [],
             "price": self.price, "duration": self.duration,
@@ -1720,6 +1731,116 @@ def redirect_www_to_apex():
         return redirect(new_url, code=301)
 
 
+SITE_URL = (os.getenv("SITE_URL") or "https://unitaryx.org").rstrip("/")
+
+# Tags that a per-project page must replace rather than duplicate.
+_HEAD_TAG_RE = re.compile(
+    r"<title>.*?</title>"
+    r'|<link\b[^>]*\brel="canonical"[^>]*>'
+    r'|<meta\b[^>]*(?:\bname="(?:description|twitter:[a-z:]+)"|\bproperty="og:[a-z:]+")[^>]*>'
+    r'|<script\s+type="application/ld\+json">.*?</script>',
+    re.DOTALL,
+)
+
+
+def _project_head(project):
+    """Server-rendered <head> tags for a case-study page. Social crawlers do
+    not execute JS, so these must be in the raw HTML response."""
+    import html as _html
+
+    def e(value):
+        return _html.escape(str(value or ""), quote=True)
+
+    url = f"{SITE_URL}/projects/{project.slug}"
+    title = f"{project.title} - {project.category.title()} Project | Unitary X"
+    desc = re.sub(r"\s+", " ", project.description or "").strip()
+    if len(desc) > 155:
+        desc = desc[:152].rsplit(" ", 1)[0] + "..."
+    image = project.photo_url or "/og-image.jpg"
+    if image.startswith("/"):
+        image = SITE_URL + image
+    ld = {
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "CreativeWork",
+                "name": project.title,
+                "description": project.description,
+                "url": url,
+                "image": image,
+                "genre": project.category,
+                "keywords": project.tags or "",
+                "creator": {"@type": "Organization", "name": "Unitary X", "url": SITE_URL + "/"},
+            },
+            {
+                "@type": "BreadcrumbList",
+                "itemListElement": [
+                    {"@type": "ListItem", "position": 1, "name": "Unitary X", "item": SITE_URL + "/"},
+                    {"@type": "ListItem", "position": 2, "name": "Projects", "item": SITE_URL + "/#projects"},
+                    {"@type": "ListItem", "position": 3, "name": project.title, "item": url},
+                ],
+            },
+        ],
+    }
+    ld_json = json.dumps(ld).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    lines = [
+        f"<title>{e(title)}</title>",
+        f'<meta name="description" content="{e(desc)}" />',
+        f'<link rel="canonical" href="{e(url)}" />',
+        '<meta property="og:type" content="article" />',
+        f'<meta property="og:url" content="{e(url)}" />',
+        '<meta property="og:site_name" content="Unitary X" />',
+        f'<meta property="og:title" content="{e(title)}" />',
+        f'<meta property="og:description" content="{e(desc)}" />',
+        f'<meta property="og:image" content="{e(image)}" />',
+        '<meta name="twitter:card" content="summary_large_image" />',
+        f'<meta name="twitter:title" content="{e(title)}" />',
+        f'<meta name="twitter:description" content="{e(desc)}" />',
+        f'<meta name="twitter:image" content="{e(image)}" />',
+        f'<script type="application/ld+json">{ld_json}</script>',
+    ]
+    return "\n".join(lines) + "\n"
+
+
+@app.route("/projects/<slug>")
+def project_page(slug):
+    """Shareable case-study page. Unknown ids get a real 404; a stale or
+    mistyped slug 301s to the canonical one so only one URL is indexable."""
+    m = re.fullmatch(r"(?:.*-)?(\d+)", slug)
+    project = db.session.get(Project, int(m.group(1))) if m else None
+    if not project:
+        return send_from_directory(DIST_DIR, "index.html"), 404
+    if slug != project.slug:
+        return redirect(f"/projects/{project.slug}", code=301)
+    with open(os.path.join(DIST_DIR, "index.html"), encoding="utf-8") as fh:
+        shell = fh.read()
+    shell = _HEAD_TAG_RE.sub("", shell)
+    shell = shell.replace("</head>", _project_head(project) + "</head>", 1)
+    resp = make_response(shell)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    import html as _html
+
+    projects = Project.query.order_by(Project.display_order.asc(), Project.id.asc()).all()
+    urls = [(f"{SITE_URL}/", "weekly", "1.0")] + [
+        (f"{SITE_URL}/projects/{p.slug}", "monthly", "0.7") for p in projects
+    ]
+    body = "".join(
+        f"  <url>\n    <loc>{_html.escape(u)}</loc>\n"
+        f"    <changefreq>{freq}</changefreq>\n    <priority>{prio}</priority>\n  </url>\n"
+        for u, freq, prio in urls
+    )
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + body + "</urlset>\n"
+    )
+    return app.response_class(xml, mimetype="application/xml")
+
+
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def index(path):
@@ -2437,6 +2558,14 @@ def api_projects():
     query = Project.query if category == "all" else Project.query.filter_by(category=category)
     projects = query.order_by(Project.display_order.asc(), Project.id.asc()).all()
     return jsonify([p.to_dict() for p in projects])
+
+
+@app.route("/api/projects/<int:project_id>")
+def api_project_detail(project_id):
+    project = db.session.get(Project, project_id)
+    if not project:
+        return jsonify({"success": False, "message": "Project not found."}), 404
+    return jsonify(project.to_dict())
 
 
 @app.route("/api/csrf-token")

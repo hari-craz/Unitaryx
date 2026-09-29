@@ -10,10 +10,15 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-unitaryx}
       POSTGRES_USER: ${POSTGRES_USER:-unitaryx}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_INITDB_ARGS: ${POSTGRES_INITDB_ARGS:--c shared_buffers=256MB -c effective_cache_size=1GB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ChangeThisDbPassword!}
       TZ: ${TZ:-Asia/Kolkata}
       PGTZ: ${TZ:-Asia/Kolkata}
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-unitaryx} -d ${POSTGRES_DB:-unitaryx}"]
       interval: 10s
@@ -21,7 +26,7 @@ services:
       retries: 10
       start_period: 20s
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - db_data_v2:/var/lib/postgresql/data
     networks:
       - unitaryx_net
     deploy:
@@ -87,7 +92,7 @@ services:
       - DB_HOST=${DB_HOST:-db}
       - DB_PORT=${DB_PORT:-5432}
       - POSTGRES_USER=${POSTGRES_USER:-unitaryx}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ChangeThisDbPassword!}
       - POSTGRES_DB=${POSTGRES_DB:-unitaryx}
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -95,7 +100,7 @@ services:
       - SMTP_PASS=${SMTP_PASS}
       - SMTP_FROM=${SMTP_FROM}
       - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
-      - SECRET_KEY=${SECRET_KEY}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set}
       - APP_URL=${APP_URL:-https://unitaryx.org}
       - TZ=${TZ:-Asia/Kolkata}
     # Disable web healthcheck inherited from Dockerfile (worker doesn't listen on HTTP 10003)
@@ -123,7 +128,7 @@ services:
     environment:
       TZ: ${TZ:-Asia/Kolkata}
       DEBUG: ${DEBUG:-False}
-      SECRET_KEY: ${SECRET_KEY}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASS: ${ADMIN_PASS}
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL}
@@ -134,7 +139,7 @@ services:
       APP_URL: ${APP_URL:-https://unitaryx.org}
 
       POSTGRES_USER: ${POSTGRES_USER:-unitaryx}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ChangeThisDbPassword!}
       DB_HOST: ${DB_HOST:-db}
       DB_PORT: ${DB_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-unitaryx}
@@ -207,7 +212,7 @@ networks:
     attachable: true
 
 volumes:
-  db_data:
+  db_data_v2:
   redis_data:
   app_data:
   app_backups:

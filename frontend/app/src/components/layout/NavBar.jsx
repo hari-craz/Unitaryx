@@ -14,12 +14,12 @@ async function logout() {
 }
 
 const LINKS = [
-  { href: '#services', label: 'Services' },
-  { href: '#founders', label: 'Team' },
-  { href: '#projects', label: 'Work' },
-  { href: '#about', label: 'About' },
-  { href: '#faq', label: 'FAQ' },
-  { href: '#contact', label: 'Contact' },
+  { href: '/#services', label: 'Services' },
+  { href: '/#founders', label: 'Team' },
+  { href: '/#projects', label: 'Work' },
+  { href: '/#about', label: 'About' },
+  { href: '/#faq', label: 'FAQ' },
+  { href: '/#contact', label: 'Contact' },
 ];
 
 export default function NavBar() {
@@ -77,7 +77,7 @@ export default function NavBar() {
         </nav>
 
         <div className="nav-actions">
-          <MagneticButton as="a" href="#contact" className="nav-primary-cta">
+          <MagneticButton as="a" href="/#contact" className="nav-primary-cta">
             Start a project
           </MagneticButton>
           {authAction}

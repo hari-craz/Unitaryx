@@ -4,18 +4,18 @@ const COLUMNS = [
   {
     heading: 'Studio',
     links: [
-      { href: '#services', label: 'Services' },
-      { href: '#founders', label: 'Team' },
-      { href: '#projects', label: 'Work' },
-      { href: '#about', label: 'About' },
+      { href: '/#services', label: 'Services' },
+      { href: '/#founders', label: 'Team' },
+      { href: '/#projects', label: 'Work' },
+      { href: '/#about', label: 'About' },
     ],
   },
   {
     heading: 'Account',
     links: [
       { href: '/login', label: 'Log in' },
-      { href: '#faq', label: 'FAQ' },
-      { href: '#contact', label: 'Start a project' },
+      { href: '/#faq', label: 'FAQ' },
+      { href: '/#contact', label: 'Start a project' },
     ],
   },
 ];
