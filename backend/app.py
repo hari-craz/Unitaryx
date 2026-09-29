@@ -310,9 +310,7 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 _database_url = os.getenv("DATABASE_URL", "").strip()
 if not _database_url:
     _db_user = (os.getenv("POSTGRES_USER") or "unitaryx").strip()
-    _db_pass = os.getenv("POSTGRES_PASSWORD") or ""
-    if not _db_pass:
-        raise RuntimeError("Set DATABASE_URL or POSTGRES_PASSWORD; there is no default database password.")
+    _db_pass = os.getenv("POSTGRES_PASSWORD") or "ChangeThisDbPassword!"
     _db_host = (os.getenv("DB_HOST") or "db").strip() or "db"
     _db_port = (os.getenv("DB_PORT") or "5432").strip() or "5432"
     _db_name = (os.getenv("POSTGRES_DB") or "unitaryx").strip()
