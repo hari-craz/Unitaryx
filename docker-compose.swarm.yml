@@ -10,7 +10,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-unitaryx}
       POSTGRES_USER: ${POSTGRES_USER:-unitaryx}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ChangeThisDbPassword!}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       TZ: ${TZ:-Asia/Kolkata}
       PGTZ: ${TZ:-Asia/Kolkata}
     command:
@@ -92,7 +92,7 @@ services:
       - DB_HOST=${DB_HOST:-db}
       - DB_PORT=${DB_PORT:-5432}
       - POSTGRES_USER=${POSTGRES_USER:-unitaryx}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ChangeThisDbPassword!}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       - POSTGRES_DB=${POSTGRES_DB:-unitaryx}
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -100,7 +100,7 @@ services:
       - SMTP_PASS=${SMTP_PASS}
       - SMTP_FROM=${SMTP_FROM}
       - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
-      - SECRET_KEY=${SECRET_KEY}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set}
       - APP_URL=${APP_URL:-https://unitaryx.org}
       - TZ=${TZ:-Asia/Kolkata}
     # Disable web healthcheck inherited from Dockerfile (worker doesn't listen on HTTP 10003)
@@ -128,7 +128,7 @@ services:
     environment:
       TZ: ${TZ:-Asia/Kolkata}
       DEBUG: ${DEBUG:-False}
-      SECRET_KEY: ${SECRET_KEY}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASS: ${ADMIN_PASS}
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL}
@@ -139,7 +139,7 @@ services:
       APP_URL: ${APP_URL:-https://unitaryx.org}
 
       POSTGRES_USER: ${POSTGRES_USER:-unitaryx}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ChangeThisDbPassword!}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       DB_HOST: ${DB_HOST:-db}
       DB_PORT: ${DB_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-unitaryx}

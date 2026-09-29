@@ -18,7 +18,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-unitaryx}
       POSTGRES_USER: ${POSTGRES_USER:-unitaryx}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       POSTGRES_INITDB_ARGS: ${POSTGRES_INITDB_ARGS:--c shared_buffers=256MB -c effective_cache_size=1GB}
       TZ: ${TZ:-Asia/Kolkata}
       PGTZ: ${TZ:-Asia/Kolkata}
@@ -105,7 +105,7 @@ services:
     environment:
       TZ: ${TZ:-Asia/Kolkata}
       DEBUG: ${DEBUG:-False}
-      SECRET_KEY: ${SECRET_KEY}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASS: ${ADMIN_PASS}
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL}
@@ -115,7 +115,7 @@ services:
       PORT: ${APP_PORT:-10003}
       
       POSTGRES_USER: ${POSTGRES_USER:-unitaryx}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       DB_HOST: ${DB_HOST:-db}
       DB_PORT: ${DB_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-unitaryx}
