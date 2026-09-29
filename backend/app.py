@@ -5647,6 +5647,29 @@ def initialize_database():
             db.session.rollback()
             app.logger.exception("Database initialization failed")
             raise
+        _verify_schema()
+
+
+def _missing_tables(engine):
+    """Names of model tables that do not exist in the connected database."""
+    return sorted(set(db.metadata.tables) - set(inspect(engine).get_table_names()))
+
+
+def _verify_schema(retries=5, delay=1.0):
+    """Fail the boot if the schema is incomplete. A worker that starts against
+    an empty database used to serve 500s on every request; failing here makes
+    the orchestrator restart it (and makes the problem visible in the logs).
+    Retries briefly because another worker may be mid-way through create_all."""
+    import time as _time
+
+    missing = _missing_tables(db.engine)
+    for _ in range(retries):
+        if not missing:
+            return
+        _time.sleep(delay)
+        missing = _missing_tables(db.engine)
+    if missing:
+        raise RuntimeError(f"Database schema incomplete after initialization; missing tables: {', '.join(missing)}")
 
 
 initialize_database()

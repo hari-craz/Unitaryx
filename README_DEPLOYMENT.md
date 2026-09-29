@@ -57,3 +57,32 @@ For local testing without GitOps:
 docker-compose -f docker-compose.yml up --build -d
 ```
 *(Since `build:` was removed from the GitOps `docker-compose.yml`, local development should use an override file like `docker-compose.override.yml` containing the `build: context: .` directives).*
+
+## 6. Database backups and restore test
+
+The database lives in the `db_data_v2` Docker volume. Volumes are not backups, so dump it regularly to a folder **outside** Docker.
+
+**Nightly backup** (on the node that runs the `db` service). Install once:
+
+```bash
+sudo mkdir -p /var/backups/unitaryx && sudo chown "$USER" /var/backups/unitaryx
+( crontab -l 2>/dev/null; echo '15 2 * * * /path/to/repo/scripts/backup_db.sh >> /var/log/unitaryx_backup.log 2>&1' ) | crontab -
+```
+
+`scripts/backup_db.sh` writes `unitaryx_YYYYmmdd_HHMMSS.sql.gz`, verifies it is a valid, non-empty dump, and keeps 14 days (`KEEP_DAYS`). It exits non-zero on failure. Also copy the folder off the machine (NAS, rclone to cloud storage): a backup on the same disk does not survive a disk failure.
+
+**Restore test** (run monthly and after any infrastructure change). Restores the newest dump into a throwaway container and prints row counts, without touching production:
+
+```bash
+scripts/restore_test.sh
+```
+
+**Real restore** into the live database (after taking a fresh backup of what is there):
+
+```bash
+zcat /var/backups/unitaryx/<file>.sql.gz | docker exec -i $(docker ps -q -f name=unitaryx_db) psql -U unitaryx -d unitaryx -v ON_ERROR_STOP=1 -1
+```
+
+The dump contains a full schema, so restore into an empty database (drop and recreate the `public` schema first) to avoid duplicate-object errors. Dumps contain user emails and password hashes: keep them private and out of git.
+
+**Startup check:** the app refuses to boot if any table is missing after initialization, so an empty database shows up as a crash-looping service instead of a site that returns 500s.
