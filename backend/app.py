@@ -2319,7 +2319,7 @@ def _main_page_actions_manifest():
         {"key": "auth.reset_password", "method": "POST", "path": "/forgot-password/reset", "auth": "public", "body": ["email", "otp", "new_password"]},
         {"key": "auth.session", "method": "GET", "path": "/api/auth/session", "auth": "public", "body": []},
         {"key": "auth.logout", "method": "POST", "path": "/api/auth/logout", "auth": "user", "body": []},
-        {"key": "project.submit_inquiry", "method": "POST", "path": "/api/contact", "auth": "user", "body": ["name", "email", "phone", "service", "deadline", "message"]},
+        {"key": "project.submit_inquiry", "method": "POST", "path": "/api/contact", "auth": "public", "body": ["name", "email", "phone", "service", "deadline", "message"]},
         {"key": "feedback.submit", "method": "POST", "path": "/feedback/submit", "auth": "user", "body": ["message", "rating"]},
         {"key": "projects.list", "method": "GET", "path": "/api/projects", "auth": "public", "body": []},
         {"key": "analytics.page_view", "method": "POST", "path": "/api/traffic/page-view", "auth": "public", "body": ["page", "title", "source"]},
@@ -2401,31 +2401,38 @@ def api_dashboard_requests():
 
 # ─── API — Contact Form ───────────────────────────────────────────────────────
 
+CONTACT_SERVICES = {"web", "software", "hardware", "hosting"}
+CONTACT_LIMITS = {"name": 100, "email": 150, "phone": 20, "deadline": 30, "message": 3000}
+
+
 @app.route("/api/contact", methods=["POST"])
 @csrf.exempt
 @limiter.limit("10 per hour", methods=["POST"])  # Prevent contact spam
 def api_contact():
-    if 'user_id' not in session:
-        return jsonify({
-            "success": False, 
-            "message": "Login required", 
-            "redirect": url_for('login')
-        }), 401
-
+    """Project enquiry. Open to anonymous visitors (a login wall loses people);
+    a signed-in user's request is additionally linked to their account so it
+    shows on their dashboard."""
     data = request.get_json(silent=True) or request.form
+
+    # Honeypot: real visitors never see or fill this field.
+    if str(data.get("website", "")).strip():
+        return jsonify({"success": True, "message": "Thanks. Your request has been received."}), 201
 
     name    = str(data.get("name",    "")).strip()
     email   = str(data.get("email",   "")).strip()
     phone   = str(data.get("phone",   "")).strip()
-    service = str(data.get("service", "")).strip()
+    service = str(data.get("service", "")).strip().lower()
     deadline= str(data.get("deadline","")).strip()
     message = str(data.get("message", "")).strip()
 
     errors = {}
     if not name:                             errors["name"]    = "Name is required."
     if not email or not validate_email(email): errors["email"] = "Valid email is required."
-    if not service:                          errors["service"] = "Please select a service."
+    if service not in CONTACT_SERVICES:      errors["service"] = "Please select a service."
     if not message or len(message) < 20:     errors["message"] = "Please describe your project (min 20 chars)."
+    for field, value in (("name", name), ("email", email), ("phone", phone), ("deadline", deadline), ("message", message)):
+        if len(value) > CONTACT_LIMITS[field] and field not in errors:
+            errors[field] = f"Please keep this under {CONTACT_LIMITS[field]} characters."
 
     if errors:
         return jsonify({"success": False, "errors": errors}), 400
@@ -2444,7 +2451,8 @@ def api_contact():
             if not smtp_from:
                 return
             msg = EmailMessage()
-            msg["Subject"] = f"New Project Request: {service.capitalize()} from {name}"
+            safe_name = re.sub(r"\s+", " ", name)  # header values may not contain newlines
+            msg["Subject"] = f"New Project Request: {service.capitalize()} from {safe_name}"
             msg["From"] = smtp_from
             msg["To"] = "xunitary@gmail.com"
             msg.set_content(
@@ -2453,7 +2461,8 @@ def api_contact():
                 f"Email: {email}\n"
                 f"Phone: {phone}\n"
                 f"Service: {service}\n"
-                f"Deadline: {deadline}\n\n"
+                f"Deadline: {deadline}\n"
+                f"Account: {'signed in' if uid else 'not signed in'}\n\n"
                 f"Message:\n{message}"
             )
             _smtp_send_message(msg)
@@ -2463,9 +2472,10 @@ def api_contact():
     import threading
     threading.Thread(target=send_notification, daemon=True).start()
 
+    follow_up = "You can track it on your dashboard." if uid else "We usually reply by email within a day."
     return jsonify({
         "success": True,
-        "message": f"Thanks, {name}. Your request has been received — redirecting you to your dashboard.",
+        "message": f"Thanks, {name}. Your request has been received. {follow_up}",
         "id": req.id
     }), 201
 

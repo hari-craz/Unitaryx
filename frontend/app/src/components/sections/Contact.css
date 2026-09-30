@@ -121,3 +121,22 @@
     grid-template-columns: 1fr;
   }
 }
+
+.contact-hp {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.contact-note {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+
+.contact-note a {
+  color: var(--cobalt);
+}
