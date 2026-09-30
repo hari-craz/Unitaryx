@@ -32,7 +32,10 @@ function ProjectRow({ project, canEdit, onEdit, onDelete, onToggleFeatured, onRe
       </div>
       <div className="admin-row-main">
         <p className="admin-row-title">{project.title}</p>
-        <p className="admin-row-sub">{project.category}</p>
+        <p className="admin-row-sub">
+          {project.category}
+          {!project.has_case_study && <span className="admin-row-hint"> · needs case study</span>}
+        </p>
       </div>
       <button
         type="button"

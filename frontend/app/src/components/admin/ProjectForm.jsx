@@ -16,6 +16,10 @@ function emptyForm() {
     duration: '',
     featured: false,
     photo_url: '',
+    problem: '',
+    approach: '',
+    outcome: '',
+    stack: '',
   };
 }
 
@@ -35,6 +39,10 @@ export default function ProjectForm({ project, onSave, onClose }) {
         duration: project.duration || '',
         featured: !!project.featured,
         photo_url: project.photo_url || '',
+        problem: project.problem || '',
+        approach: project.approach || '',
+        outcome: project.outcome || '',
+        stack: Array.isArray(project.stack) ? project.stack.join(', ') : project.stack || '',
       });
     } else {
       setForm(emptyForm());
@@ -61,6 +69,10 @@ export default function ProjectForm({ project, onSave, onClose }) {
     const payload = {
       ...form,
       tags: form.tags
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean),
+      stack: form.stack
         .split(',')
         .map((t) => t.trim())
         .filter(Boolean),
@@ -148,6 +160,48 @@ export default function ProjectForm({ project, onSave, onClose }) {
               />
               Featured project
             </label>
+
+            <fieldset className="studio-fieldset">
+              <legend>Case study (shown on the project page)</legend>
+              <label className="studio-field">
+                Problem
+                <textarea
+                  rows={3}
+                  maxLength={4000}
+                  value={form.problem}
+                  onChange={(e) => set({ problem: e.target.value })}
+                  placeholder="What did the client need? 2-3 sentences."
+                />
+              </label>
+              <label className="studio-field">
+                Approach
+                <textarea
+                  rows={3}
+                  maxLength={4000}
+                  value={form.approach}
+                  onChange={(e) => set({ approach: e.target.value })}
+                  placeholder="How was it built, and why those choices?"
+                />
+              </label>
+              <label className="studio-field">
+                Outcome
+                <textarea
+                  rows={3}
+                  maxLength={4000}
+                  value={form.outcome}
+                  onChange={(e) => set({ outcome: e.target.value })}
+                  placeholder="What was delivered or achieved?"
+                />
+              </label>
+              <label className="studio-field">
+                Stack (comma-separated)
+                <input
+                  value={form.stack}
+                  onChange={(e) => set({ stack: e.target.value })}
+                  placeholder="Flask, PostgreSQL, React"
+                />
+              </label>
+            </fieldset>
           </div>
 
           <div className="studio-form-col">

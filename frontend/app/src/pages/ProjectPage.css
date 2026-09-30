@@ -140,3 +140,22 @@
   font-size: 0.75rem;
   color: var(--ink-faint);
 }
+
+.project-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.project-section h2 {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+.project-section p {
+  font-size: 1.05rem;
+  line-height: 1.75;
+  color: var(--ink-soft);
+  max-width: 68ch;
+  white-space: pre-line;
+}
