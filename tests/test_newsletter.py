@@ -137,3 +137,39 @@ def test_confirm_email_payload_english_and_hindi():
     assert "Confirm" in subject and "https://x.test/newsletter/confirm/t" in plain and "https://x.test" in html
     subject_hi, plain_hi, _ = mailers.build_newsletter_confirm_payload("https://x.test/c", "hi")
     assert "पुष्टि" in subject_hi and "नमस्ते" in plain_hi
+
+
+def test_concurrent_insert_race_returns_generic_reply_without_duplicate_mail(client, sent, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    real_commit = db.session.commit
+    calls = {"n": 0}
+
+    def commit_once_raising():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise IntegrityError("insert", {}, Exception("duplicate key"))
+        return real_commit()
+
+    monkeypatch.setattr(db.session, "commit", commit_once_raising)
+    resp = subscribe(client, "race@example.com")
+    assert resp.status_code == 200 and resp.get_json()["success"] is True
+    assert sent == []  # the request that lost the race sends nothing
+
+
+def test_resend_claim_is_atomic(client, sent):
+    subscribe(client, "claim@example.com")
+    with flask_app.app_context():
+        s = Subscriber.query.filter_by(email="claim@example.com").first()
+        s.last_sent_at = datetime.utcnow() - timedelta(minutes=11)
+        db.session.commit()
+    subscribe(client, "claim@example.com")
+    subscribe(client, "claim@example.com")  # second attempt lands inside the new cooldown
+    assert len(sent) == 2
+
+
+def test_confirmation_mail_is_sent_synchronously(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(mailers, "_deliver", lambda *a, **kw: captured.update(kw))
+    mailers.send_newsletter_confirm_email("a@b.co", "https://x.test/c", "from@x.test")
+    assert captured.get("sync") is True

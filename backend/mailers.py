@@ -109,7 +109,9 @@ def build_assigned_payload(
     return subject, plain, html
 
 
-def _deliver(subject: str, sender: str, recipient: str, plain: str, html: str | None = None) -> None:
+def _deliver(
+    subject: str, sender: str, recipient: str, plain: str, html: str | None = None, sync: bool = False
+) -> None:
     from .email_tasks import send_email
 
     # send_email is a Celery task when a broker is configured; otherwise a plain
@@ -117,7 +119,9 @@ def _deliver(subject: str, sender: str, recipient: str, plain: str, html: str | 
     # unreachable — common in local dev, and possible in prod if the worker is
     # down) fall back to sending synchronously in-process. Calling the Celery
     # task object directly runs its body now, so mail still goes out either way.
-    enqueue = getattr(send_email, "delay", None)
+    # sync=True skips the queue so the caller sees SMTP errors (a queued task
+    # that later fails in the worker is invisible to the request that made it).
+    enqueue = None if sync else getattr(send_email, "delay", None)
     if callable(enqueue):
         try:
             enqueue(subject, sender, recipient, plain, html)
@@ -168,4 +172,6 @@ def build_newsletter_confirm_payload(confirm_url: str, locale: str | None = None
 
 def send_newsletter_confirm_email(recipient: str, confirm_url: str, sender: str, locale: str | None = None) -> None:
     subject, plain, html = build_newsletter_confirm_payload(confirm_url=confirm_url, locale=locale)
-    _deliver(subject, sender, recipient, plain, html)
+    # Synchronous on purpose: the subscribe endpoint releases its resend cooldown
+    # if delivery fails, which only works if the failure reaches the request.
+    _deliver(subject, sender, recipient, plain, html, sync=True)

@@ -18,7 +18,7 @@ from .mailers import (send_welcome_email as queue_welcome_email, send_assigned_e
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, or_, text
 from werkzeug.middleware.proxy_fix import ProxyFix
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -463,8 +463,9 @@ class AdminFeedback(db.Model):
 
 
 class Subscriber(db.Model):
-    """Newsletter subscriber. Double opt-in: a row is only mailed once
-    `confirmed` is true; unsubscribing deletes the row."""
+    """Newsletter subscriber. Double opt-in: the confirmation email is sent
+    while `confirmed` is false; campaign mail, if later added, must be
+    restricted to confirmed rows; unsubscribing deletes the row."""
     __tablename__ = 'subscribers'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2628,23 +2629,41 @@ def api_newsletter_subscribe():
     sub = Subscriber.query.filter_by(email=email).first()
     if sub and sub.confirmed:
         return generic  # same reply either way, so addresses cannot be probed
+
     if sub is None:
         sub = Subscriber(
             email=email,
             confirm_token=secrets.token_urlsafe(32),
             unsub_token=secrets.token_urlsafe(32),
+            last_sent_at=now,
         )
         db.session.add(sub)
-    elif sub.last_sent_at and now - sub.last_sent_at < NEWSLETTER_RESEND_COOLDOWN:
-        return generic
+        try:
+            db.session.commit()
+        except IntegrityError:
+            # A concurrent request for the same address inserted it first and
+            # is the one sending the confirmation; do not send a duplicate.
+            db.session.rollback()
+            return generic
+    else:
+        # Claim the resend atomically: only one concurrent request can move
+        # last_sent_at forward, so the cooldown holds under races too.
+        claimed = (
+            Subscriber.query.filter(
+                Subscriber.id == sub.id,
+                Subscriber.confirmed.is_(False),
+                or_(Subscriber.last_sent_at.is_(None), Subscriber.last_sent_at < now - NEWSLETTER_RESEND_COOLDOWN),
+            ).update({"last_sent_at": now}, synchronize_session=False)
+        )
+        db.session.commit()
+        if not claimed:
+            return generic
 
-    sub.last_sent_at = now
-    db.session.commit()
     try:
         _send_newsletter_confirmation(sub)
     except Exception:
         app.logger.exception("Newsletter confirmation email failed")
-        sub.last_sent_at = None
+        Subscriber.query.filter_by(id=sub.id).update({"last_sent_at": None}, synchronize_session=False)
         db.session.commit()
     return generic
 
