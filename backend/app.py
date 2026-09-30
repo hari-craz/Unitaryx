@@ -10,10 +10,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename, safe_join
 from datetime import datetime, timedelta
 from functools import wraps
-import os, re, urllib.parse, random, smtplib, ssl, csv, json, hashlib, uuid
+import os, re, urllib.parse, random, smtplib, ssl, csv, json, hashlib, uuid, secrets
 from io import StringIO
 from email.message import EmailMessage
-from .mailers import send_welcome_email as queue_welcome_email, send_assigned_email as queue_assigned_email
+from .mailers import (send_welcome_email as queue_welcome_email, send_assigned_email as queue_assigned_email,
+                      send_newsletter_confirm_email as queue_newsletter_confirm_email)
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
@@ -461,6 +462,21 @@ class AdminFeedback(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+class Subscriber(db.Model):
+    """Newsletter subscriber. Double opt-in: a row is only mailed once
+    `confirmed` is true; unsubscribing deletes the row."""
+    __tablename__ = 'subscribers'
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(150), unique=True, nullable=False, index=True)
+    confirmed = db.Column(db.Boolean, default=False, nullable=False)
+    confirm_token = db.Column(db.String(64), unique=True, nullable=False)
+    unsub_token = db.Column(db.String(64), unique=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    confirmed_at = db.Column(db.DateTime)
+    last_sent_at = db.Column(db.DateTime)
+
+
 class PublicFeedback(db.Model):
     """Public-site feedback submitted by signed-in users."""
     __tablename__ = 'public_feedback'
@@ -689,6 +705,7 @@ DB_BACKUP_MODELS = {
     "projects": Project,
     "testimonials": Testimonial,
     "founders": Founder,
+    "subscribers": Subscriber,
     "project_requests": ProjectRequest,
     "admin_tasks": AdminTask,
     "admin_audit_logs": AdminAuditLog,
@@ -2573,6 +2590,133 @@ def api_csrf_token():
     if 'user_id' not in session:
         return jsonify({"success": False, "message": "Authentication required."}), 401
     return jsonify({"token": csrf._get_token()})
+
+
+# ─── Newsletter (double opt-in) ───────────────────────────────────────────────
+
+NEWSLETTER_RESEND_COOLDOWN = timedelta(minutes=10)
+NEWSLETTER_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+NEWSLETTER_GENERIC_REPLY = "If that address is valid, we have sent a confirmation link. Please check your inbox."
+
+
+def _send_newsletter_confirmation(sub):
+    smtp_user = (os.getenv("SMTP_USER") or "").strip()
+    smtp_from = (os.getenv("SMTP_FROM") or smtp_user).strip()
+    if not smtp_from:
+        raise RuntimeError("SMTP_FROM or SMTP_USER must be configured")
+    queue_newsletter_confirm_email(
+        recipient=sub.email,
+        confirm_url=f"{resolved_app_url().rstrip('/')}/newsletter/confirm/{sub.confirm_token}",
+        sender=smtp_from,
+        locale=os.getenv("MAIL_LOCALE", "en"),
+    )
+
+
+@app.route("/api/newsletter/subscribe", methods=["POST"])
+@csrf.exempt
+@limiter.limit("5 per hour", methods=["POST"])
+def api_newsletter_subscribe():
+    data = request_payload()
+    generic = jsonify({"success": True, "message": NEWSLETTER_GENERIC_REPLY})
+    if str(data.get("website", "")).strip():  # honeypot: real visitors never fill this
+        return generic
+    email = normalize_email(data.get("email"))
+    if not email or len(email) > 150 or not NEWSLETTER_EMAIL_RE.match(email):
+        return jsonify({"success": False, "message": "Enter a valid email address."}), 400
+
+    now = datetime.utcnow()
+    sub = Subscriber.query.filter_by(email=email).first()
+    if sub and sub.confirmed:
+        return generic  # same reply either way, so addresses cannot be probed
+    if sub is None:
+        sub = Subscriber(
+            email=email,
+            confirm_token=secrets.token_urlsafe(32),
+            unsub_token=secrets.token_urlsafe(32),
+        )
+        db.session.add(sub)
+    elif sub.last_sent_at and now - sub.last_sent_at < NEWSLETTER_RESEND_COOLDOWN:
+        return generic
+
+    sub.last_sent_at = now
+    db.session.commit()
+    try:
+        _send_newsletter_confirmation(sub)
+    except Exception:
+        app.logger.exception("Newsletter confirmation email failed")
+        sub.last_sent_at = None
+        db.session.commit()
+    return generic
+
+
+@app.route("/newsletter/confirm/<token>")
+@app.route("/newsletter/unsubscribe/<token>")
+def newsletter_action_page(token):
+    """SPA shell for the confirm/unsubscribe pages. The action itself is a POST
+    from a button, so mail scanners that prefetch links cannot confirm or
+    unsubscribe anyone."""
+    resp = send_from_directory(DIST_DIR, "index.html")
+    resp.headers["X-Robots-Tag"] = "noindex"
+    return resp
+
+
+def _subscriber_by_token(column, token):
+    token = str(token or "").strip()
+    if len(token) < 20:
+        return None
+    return Subscriber.query.filter(column == token).first()
+
+
+@app.route("/api/newsletter/confirm", methods=["POST"])
+@csrf.exempt
+@limiter.limit("30 per hour", methods=["POST"])
+def api_newsletter_confirm():
+    sub = _subscriber_by_token(Subscriber.confirm_token, request_payload().get("token"))
+    if not sub:
+        return jsonify({"success": False, "message": "This link is invalid or has expired."}), 404
+    if not sub.confirmed:
+        sub.confirmed = True
+        sub.confirmed_at = datetime.utcnow()
+        db.session.commit()
+    return jsonify({"success": True, "message": "You are subscribed. Thank you."})
+
+
+@app.route("/api/newsletter/unsubscribe", methods=["POST"])
+@csrf.exempt
+@limiter.limit("30 per hour", methods=["POST"])
+def api_newsletter_unsubscribe():
+    sub = _subscriber_by_token(Subscriber.unsub_token, request_payload().get("token"))
+    if not sub:
+        return jsonify({"success": False, "message": "This link is invalid, or you have already unsubscribed."}), 404
+    db.session.delete(sub)
+    db.session.commit()
+    return jsonify({"success": True, "message": "You have been unsubscribed."})
+
+
+@app.route("/api/admin/newsletter/summary")
+@api_superadmin_required
+def api_admin_newsletter_summary():
+    confirmed = Subscriber.query.filter_by(confirmed=True).count()
+    pending = Subscriber.query.filter_by(confirmed=False).count()
+    return jsonify({"confirmed": confirmed, "pending": pending})
+
+
+@app.route("/api/admin/newsletter/export.csv")
+@api_superadmin_required
+def api_admin_newsletter_export():
+    def safe(value):
+        # Stop spreadsheet apps from treating an address like "=cmd@x.com" as a formula.
+        return "'" + value if value[:1] in ("=", "+", "-", "@") else value
+
+    out = StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["email", "confirmed_at"])
+    for sub in Subscriber.query.filter_by(confirmed=True).order_by(Subscriber.confirmed_at.asc()).all():
+        writer.writerow([safe(sub.email), sub.confirmed_at.isoformat() if sub.confirmed_at else ""])
+    resp = make_response(out.getvalue())
+    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+    resp.headers["Content-Disposition"] = "attachment; filename=newsletter_subscribers.csv"
+    return resp
 
 
 # ─── API — Founders / Team ─────────────────────────────────────────────────────

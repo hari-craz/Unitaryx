@@ -13,6 +13,7 @@ import LeadsPanel from '../components/admin/LeadsPanel';
 import AdminsPanel from '../components/admin/AdminsPanel';
 import SessionsPanel from '../components/admin/SessionsPanel';
 import BackupsPanel from '../components/admin/BackupsPanel';
+import NewsletterPanel from '../components/admin/NewsletterPanel';
 import './AdminStudio.css';
 
 // `superadmin: true` tabs are entirely hidden from non-superadmin admins —
@@ -35,6 +36,7 @@ const TABS = [
   { key: 'approvals', label: 'Approvals' },
   { key: 'admins', label: 'Admins', superadmin: true },
   { key: 'sessions', label: 'Sessions' },
+  { key: 'newsletter', label: 'Newsletter', superadmin: true },
   { key: 'backups', label: 'Backups', superadmin: true },
 ];
 
@@ -61,6 +63,7 @@ const PANELS = {
   approvals: ApprovalsPanel,
   admins: AdminsPanel,
   sessions: SessionsPanel,
+  newsletter: NewsletterPanel,
   backups: BackupsPanel,
 };
 

@@ -25,6 +25,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "assigned_intro": "You have been assigned a new admin task by {assigned_by}.",
         "assigned_body": "Please review the task details below.",
         "assigned_cta": "Open the admin panel",
+        "newsletter_confirm_subject": "Confirm your subscription to Unitary X",
+        "newsletter_confirm_greeting": "Hello,",
+        "newsletter_confirm_intro": "Please confirm that you would like to receive occasional updates from Unitary X.",
+        "newsletter_confirm_body": "If you did not request this, ignore this email and you will not be subscribed.",
+        "newsletter_confirm_cta": "Confirm subscription",
     },
     "hi": {
         "welcome_subject": "Unitary X में आपका स्वागत है",
@@ -37,6 +42,11 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "assigned_intro": "आपको {assigned_by} द्वारा एक नया एडमिन कार्य सौंपा गया है।",
         "assigned_body": "कृपया नीचे दिए गए कार्य विवरण देखें।",
         "assigned_cta": "एडमिन पैनल खोलें",
+        "newsletter_confirm_subject": "Unitary X की सदस्यता की पुष्टि करें",
+        "newsletter_confirm_greeting": "नमस्ते,",
+        "newsletter_confirm_intro": "कृपया पुष्टि करें कि आप Unitary X से समय-समय पर अपडेट प्राप्त करना चाहते हैं।",
+        "newsletter_confirm_body": "यदि आपने यह अनुरोध नहीं किया है, तो इस ईमेल को अनदेखा करें; आपको सदस्यता नहीं दी जाएगी।",
+        "newsletter_confirm_cta": "सदस्यता की पुष्टि करें",
     },
 }
 
@@ -138,4 +148,24 @@ def send_assigned_email(
         locale=locale,
         app_url=app_url,
     )
+    _deliver(subject, sender, recipient, plain, html)
+
+
+def build_newsletter_confirm_payload(confirm_url: str, locale: str | None = None) -> Tuple[str, str, str]:
+    text = _copy(locale)
+    subject = text["newsletter_confirm_subject"]
+    context = {
+        "greeting": text["newsletter_confirm_greeting"],
+        "intro": text["newsletter_confirm_intro"],
+        "body": text["newsletter_confirm_body"],
+        "confirm_url": confirm_url,
+        "cta": text["newsletter_confirm_cta"],
+    }
+    plain = _render_template("newsletter_confirm.txt", context)
+    html = _render_template("newsletter_confirm.html", context)
+    return subject, plain, html
+
+
+def send_newsletter_confirm_email(recipient: str, confirm_url: str, sender: str, locale: str | None = None) -> None:
+    subject, plain, html = build_newsletter_confirm_payload(confirm_url=confirm_url, locale=locale)
     _deliver(subject, sender, recipient, plain, html)

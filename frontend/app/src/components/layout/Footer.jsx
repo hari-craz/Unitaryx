@@ -1,3 +1,4 @@
+import NewsletterSignup from './NewsletterSignup';
 import './Footer.css';
 
 const COLUMNS = [
@@ -64,6 +65,10 @@ export default function Footer() {
             </li>
           </ul>
         </div>
+      </div>
+
+      <div className="footer-newsletter">
+        <NewsletterSignup />
       </div>
 
       <div className="footer-bottom">

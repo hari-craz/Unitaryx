@@ -5,6 +5,7 @@ import MarketingPage from './pages/MarketingPage';
 import Dashboard from './pages/Dashboard';
 import AdminStudio from './pages/AdminStudio';
 import ProjectPage from './pages/ProjectPage';
+import NewsletterAction from './pages/NewsletterAction';
 import NotFound from './pages/NotFound';
 
 export default function App() {
@@ -17,6 +18,8 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/admin/studio" element={<AdminStudio />} />
         <Route path="/projects/:slug" element={<ProjectPage />} />
+        <Route path="/newsletter/confirm/:token" element={<NewsletterAction mode="confirm" />} />
+        <Route path="/newsletter/unsubscribe/:token" element={<NewsletterAction mode="unsubscribe" />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </>
