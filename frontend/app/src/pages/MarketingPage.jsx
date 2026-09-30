@@ -6,6 +6,7 @@ import Hero from '../components/sections/Hero';
 import Services from '../components/sections/Services';
 import FoundersCarousel from '../components/sections/founders/FoundersCarousel';
 import ProjectsGrid from '../components/sections/projects/ProjectsGrid';
+import Hosting from '../components/sections/Hosting';
 import About from '../components/sections/About';
 import Process from '../components/sections/Process';
 import Faq from '../components/sections/Faq';
@@ -31,6 +32,7 @@ export default function MarketingPage() {
             pinned viewport without an inner scrollbar / blank mid-scroll gap. */}
         <div className="marketing-flow">
           <ProjectsGrid />
+          <Hosting />
           <About />
           <Process />
           <Faq />
