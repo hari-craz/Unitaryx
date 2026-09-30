@@ -54,7 +54,8 @@ export default function NewsletterSignup() {
         </button>
       </div>
       <p className="newsletter-note">
-        We email occasionally about new work. Confirm by email; unsubscribe any time.
+        We email occasionally about new work. Confirm by email; unsubscribe any time. See our{' '}
+        <a href="/privacy">privacy notice</a>.
       </p>
       {state.message && (
         <p

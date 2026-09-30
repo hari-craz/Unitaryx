@@ -17,6 +17,7 @@ const COLUMNS = [
       { href: '/login', label: 'Log in' },
       { href: '/#faq', label: 'FAQ' },
       { href: '/#contact', label: 'Start a project' },
+      { href: '/privacy', label: 'Privacy' },
     ],
   },
 ];

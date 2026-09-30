@@ -133,3 +133,15 @@ def test_sitemap_deprioritises_projects_without_case_study(client):
     xml = client.get("/sitemap.xml").get_data(as_text=True)
     assert re.search(rf"{thin_slug}</loc>\s*<changefreq>monthly</changefreq>\s*<priority>0.4", xml)
     assert re.search(rf"{rich_slug}</loc>\s*<changefreq>monthly</changefreq>\s*<priority>0.7", xml)
+
+
+def test_privacy_page_has_its_own_canonical_and_is_in_the_sitemap(client):
+    resp = client.get("/privacy")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert html.count('rel="canonical"') == 1
+    assert 'href="https://unitaryx.org/privacy"' in html
+    assert html.count("<title>") == 1 and "<title>Privacy notice" in html
+    assert "FAQPage" not in html
+    locs = re.findall(r"<loc>(.*?)</loc>", client.get("/sitemap.xml").get_data(as_text=True))
+    assert "https://unitaryx.org/privacy" in locs

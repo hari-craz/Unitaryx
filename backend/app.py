@@ -1857,12 +1857,50 @@ def project_page(slug):
     return resp
 
 
+PRIVACY_TITLE = "Privacy notice | Unitary X"
+PRIVACY_DESCRIPTION = (
+    "What personal data Unitary X collects through its website, why, who it is shared with, "
+    "and how to ask for access or deletion."
+)
+
+
+@app.route("/privacy")
+def privacy_page():
+    """Privacy notice. Served with its own canonical/OG tags, since the shared
+    shell's canonical points at the homepage."""
+    import html as _html
+
+    url = f"{SITE_URL}/privacy"
+    e = lambda v: _html.escape(v, quote=True)
+    head = (
+        f"<title>{e(PRIVACY_TITLE)}</title>\n"
+        f'<meta name="description" content="{e(PRIVACY_DESCRIPTION)}" />\n'
+        f'<link rel="canonical" href="{e(url)}" />\n'
+        '<meta property="og:type" content="website" />\n'
+        f'<meta property="og:url" content="{e(url)}" />\n'
+        '<meta property="og:site_name" content="Unitary X" />\n'
+        f'<meta property="og:title" content="{e(PRIVACY_TITLE)}" />\n'
+        f'<meta property="og:description" content="{e(PRIVACY_DESCRIPTION)}" />\n'
+        f'<meta property="og:image" content="{SITE_URL}/og-image.jpg" />\n'
+        '<meta name="twitter:card" content="summary_large_image" />\n'
+        f'<meta name="twitter:title" content="{e(PRIVACY_TITLE)}" />\n'
+        f'<meta name="twitter:description" content="{e(PRIVACY_DESCRIPTION)}" />\n'
+        f'<meta name="twitter:image" content="{SITE_URL}/og-image.jpg" />\n'
+    )
+    with open(os.path.join(DIST_DIR, "index.html"), encoding="utf-8") as fh:
+        shell = fh.read()
+    shell = _HEAD_TAG_RE.sub("", shell).replace("</head>", head + "</head>", 1)
+    resp = make_response(shell)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
+
+
 @app.route("/sitemap.xml")
 def sitemap_xml():
     import html as _html
 
     projects = Project.query.order_by(Project.display_order.asc(), Project.id.asc()).all()
-    urls = [(f"{SITE_URL}/", "weekly", "1.0")] + [
+    urls = [(f"{SITE_URL}/", "weekly", "1.0"), (f"{SITE_URL}/privacy", "yearly", "0.3")] + [
         (f"{SITE_URL}/projects/{p.slug}", "monthly", "0.7" if p.has_case_study else "0.4")
         for p in projects
     ]
