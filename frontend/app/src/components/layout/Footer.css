@@ -80,3 +80,9 @@
     grid-column: 1 / -1;
   }
 }
+
+.footer-newsletter {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 clamp(1.5rem, 5vw, 4rem) 2rem;
+}

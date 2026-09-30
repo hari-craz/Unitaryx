@@ -2,5 +2,6 @@ User-agent: *
 Allow: /
 Disallow: /admin
 Disallow: /dashboard
+Disallow: /newsletter/
 
 Sitemap: https://unitaryx.org/sitemap.xml

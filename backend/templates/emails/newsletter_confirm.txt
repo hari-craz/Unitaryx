@@ -1,0 +1,9 @@
+{{ greeting }}
+
+{{ intro }}
+
+{{ cta }}: {{ confirm_url }}
+
+{{ body }}
+
+— The Unitary X Team
