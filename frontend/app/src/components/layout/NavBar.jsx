@@ -17,6 +17,7 @@ const LINKS = [
   { href: '/#services', label: 'Services' },
   { href: '/#founders', label: 'Team' },
   { href: '/#projects', label: 'Work' },
+  { href: '/#hosting', label: 'Hosting' },
   { href: '/#about', label: 'About' },
   { href: '/#faq', label: 'FAQ' },
   { href: '/#contact', label: 'Contact' },
