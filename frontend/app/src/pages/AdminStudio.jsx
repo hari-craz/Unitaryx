@@ -14,6 +14,7 @@ import AdminsPanel from '../components/admin/AdminsPanel';
 import SessionsPanel from '../components/admin/SessionsPanel';
 import BackupsPanel from '../components/admin/BackupsPanel';
 import './AdminStudio.css';
+import '../components/admin/AdminStudioHints.css';
 
 // `superadmin: true` tabs are entirely hidden from non-superadmin admins —
 // these manage site content, other admin accounts, or raw DB backups, and

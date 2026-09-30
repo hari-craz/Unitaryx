@@ -41,9 +41,14 @@ export default function ProjectPage() {
   }, [id]);
 
   const { loading, project, related } = state;
-  usePageMeta(project ? `${project.title} - ${project.category} project | Unitary X` : 'Project | Unitary X', {
-    noindex: !loading && !project,
-  });
+  usePageMeta(
+    project
+      ? `${project.title} - ${project.category.charAt(0).toUpperCase()}${project.category.slice(1)} Project | Unitary X`
+      : 'Project | Unitary X',
+    {
+      noindex: !loading && !project,
+    }
+  );
 
   if (!loading && !project) return <NotFound />;
 
@@ -93,6 +98,30 @@ export default function ProjectPage() {
                 src={project.photo_url}
                 alt={`${project.title} - ${project.category} project by Unitary X`}
               />
+            )}
+
+            {[
+              ['Problem', project.problem],
+              ['Approach', project.approach],
+              ['Outcome', project.outcome],
+            ]
+              .filter(([, text]) => text)
+              .map(([label, text]) => (
+                <section className="project-section" key={label}>
+                  <h2>{label}</h2>
+                  <p>{text}</p>
+                </section>
+              ))}
+
+            {project.stack?.length > 0 && (
+              <section className="project-section">
+                <h2>Stack</h2>
+                <ul className="project-tags" aria-label="Technology stack">
+                  {project.stack.map((t) => (
+                    <li key={t}>{t.trim()}</li>
+                  ))}
+                </ul>
+              </section>
             )}
 
             {project.tags?.length > 0 && (

@@ -623,6 +623,14 @@ class Project(db.Model):
     featured    = db.Column(db.Boolean, default=False)
     display_order = db.Column(db.Integer, default=0)
     photo_url   = db.Column(db.String(300))
+    problem     = db.Column(db.Text)
+    approach    = db.Column(db.Text)
+    outcome     = db.Column(db.Text)
+    stack       = db.Column(db.String(300))
+
+    @property
+    def has_case_study(self):
+        return bool((self.problem or self.approach or self.outcome or "").strip())
 
     @property
     def slug(self):
@@ -639,6 +647,9 @@ class Project(db.Model):
             "bg_class": self.bg_class, "featured": self.featured,
             "display_order": self.display_order or 0,
             "photo_url": self.photo_url,
+            "problem": self.problem, "approach": self.approach, "outcome": self.outcome,
+            "stack": self.stack.split(",") if self.stack else [],
+            "has_case_study": self.has_case_study,
         }
 
 
@@ -1685,6 +1696,10 @@ def _ensure_schema_columns():
         "projects": [
             ("display_order", "INTEGER DEFAULT 0"),
             ("photo_url", "VARCHAR(300)"),
+            ("problem", "TEXT"),
+            ("approach", "TEXT"),
+            ("outcome", "TEXT"),
+            ("stack", "VARCHAR(300)"),
         ],
     }
 
@@ -1753,7 +1768,7 @@ def _project_head(project):
 
     url = f"{SITE_URL}/projects/{project.slug}"
     title = f"{project.title} - {project.category.title()} Project | Unitary X"
-    desc = re.sub(r"\s+", " ", project.description or "").strip()
+    desc = re.sub(r"\s+", " ", project.problem or project.description or "").strip()
     if len(desc) > 155:
         desc = desc[:152].rsplit(" ", 1)[0] + "..."
     image = project.photo_url or "/og-image.jpg"
@@ -1766,10 +1781,13 @@ def _project_head(project):
                 "@type": "CreativeWork",
                 "name": project.title,
                 "description": project.description,
+                "abstract": project.problem or project.description,
                 "url": url,
                 "image": image,
                 "genre": project.category,
-                "keywords": project.tags or "",
+                "keywords": ", ".join(
+                    k.strip() for k in f"{project.stack or ''},{project.tags or ''}".split(",") if k.strip()
+                ),
                 "creator": {"@type": "Organization", "name": "Unitary X", "url": SITE_URL + "/"},
             },
             {
@@ -1827,7 +1845,8 @@ def sitemap_xml():
 
     projects = Project.query.order_by(Project.display_order.asc(), Project.id.asc()).all()
     urls = [(f"{SITE_URL}/", "weekly", "1.0")] + [
-        (f"{SITE_URL}/projects/{p.slug}", "monthly", "0.7") for p in projects
+        (f"{SITE_URL}/projects/{p.slug}", "monthly", "0.7" if p.has_case_study else "0.4")
+        for p in projects
     ]
     body = "".join(
         f"  <url>\n    <loc>{_html.escape(u)}</loc>\n"
@@ -2689,6 +2708,21 @@ def api_admin_founders_reorder():
 
 # ─── API — Admin Projects CRUD ──────────────────────────────────────────────────
 
+CASE_STUDY_TEXT_FIELDS = ("problem", "approach", "outcome")
+CASE_STUDY_TEXT_LIMIT = 4000
+PROJECT_STACK_LIMIT = 300
+
+
+def _clean_case_text(value):
+    return str(value or "").strip()[:CASE_STUDY_TEXT_LIMIT] or None
+
+
+def _clean_stack(value):
+    items = value if isinstance(value, list) else str(value or "").split(",")
+    joined = ",".join(t for t in (str(i).strip() for i in items) if t)
+    return joined[:PROJECT_STACK_LIMIT].strip(",") or None
+
+
 @app.route("/api/admin/projects", methods=["POST"])
 @api_superadmin_required
 @limiter.limit("60 per hour", methods=["POST"])
@@ -2718,6 +2752,10 @@ def api_admin_projects_create():
         featured=bool(data.get("featured", False)),
         display_order=int(data.get("display_order", max_order + 1)),
         photo_url=str(data.get("photo_url", "")).strip() or None,
+        problem=_clean_case_text(data.get("problem")),
+        approach=_clean_case_text(data.get("approach")),
+        outcome=_clean_case_text(data.get("outcome")),
+        stack=_clean_stack(data.get("stack")),
     )
     db.session.add(project)
     db.session.commit()
@@ -2769,6 +2807,11 @@ def api_admin_projects_update(project_id):
         project.display_order = int(data.get("display_order") or 0)
     if "photo_url" in data:
         project.photo_url = str(data.get("photo_url", "")).strip() or None
+    for field in CASE_STUDY_TEXT_FIELDS:
+        if field in data:
+            setattr(project, field, _clean_case_text(data.get(field)))
+    if "stack" in data:
+        project.stack = _clean_stack(data.get("stack"))
 
     db.session.commit()
     return jsonify({"success": True, "project": project.to_dict()})
