@@ -6,6 +6,7 @@ import KineticText from '../../common/KineticText';
 import ScrollPanel from '../../layout/ScrollPanel';
 import { useFounders } from '../../../hooks/useFounders';
 import { usePrefersReducedMotion } from '../../../hooks/usePrefersReducedMotion';
+import { fadeUp, withMotion } from '../../../lib/motion';
 import './FoundersCarousel.css';
 
 const GROUP_SIZE = 3;
@@ -138,15 +139,15 @@ function FoundersContent({ founders, loading, reduceMotion, scrollYProgress, dri
 
   return (
     <div className="panel-inner founders-panel-inner">
-      <div className="founders-header">
+      <motion.div className="founders-header" variants={withMotion(fadeUp, reduceMotion)} custom={0.05}>
         <div>
           <span className="eyebrow">The team</span>
           <KineticText as="h2" className="gradient-headline founders-title" text="Meet the builders of Unitary X" />
         </div>
         {driveFromScroll && <span className="founders-scroll-hint">Keep scrolling to meet the team ↓</span>}
-      </div>
+      </motion.div>
 
-      <div className="founders-body">
+      <motion.div className="founders-body" variants={withMotion(fadeUp, reduceMotion)} custom={0.3}>
         {/* Left info card — fills what used to be dead space beside the
             carousel, and carries the active member's full detail so the photo
             cards can stay clean. Desktop only; on mobile the card overlay
@@ -238,7 +239,7 @@ function FoundersContent({ founders, loading, reduceMotion, scrollYProgress, dri
           </button>
         </div>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

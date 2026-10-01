@@ -1,4 +1,5 @@
 .hero-inner {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
@@ -32,10 +33,10 @@
 }
 
 .hero-title {
-  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  font-size: clamp(2.5rem, 5vw, 4.25rem);
   font-weight: 800;
   line-height: 1.05;
-  max-width: 18ch;
+  max-width: 14ch;
 }
 
 .hero-subtitle {
@@ -59,6 +60,7 @@
 }
 
 .hero-highlights {
+  max-width: 34rem;
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem 1.5rem;
