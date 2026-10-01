@@ -55,8 +55,9 @@ export default function Terms() {
 
             <h3>Your copy of your work</h3>
             <p>
-              Keep your own copy of your code and data. Backups are offered as an add-on and as part of the Business
-              plan&apos;s monitoring and backup options.
+              Keep your own copy of your code and data. Backup is available as an optional add-on, and the Business plan
+              lists &ldquo;monitoring &amp; backup options&rdquo;. Ask us exactly what is covered on your plan before you rely on
+              backups.
             </p>
           </section>
 
