@@ -356,3 +356,7 @@
   translate: 0 -5px;
   box-shadow: 0 16px 36px -12px rgba(31, 53, 147, 0.28);
 }
+
+.hosting-terms a {
+  color: var(--cobalt-deep);
+}

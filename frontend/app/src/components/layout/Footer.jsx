@@ -19,6 +19,7 @@ const COLUMNS = [
       { href: '/#faq', label: 'FAQ' },
       { href: '/#contact', label: 'Start a project' },
       { href: '/privacy', label: 'Privacy' },
+      { href: '/terms', label: 'Terms' },
     ],
   },
 ];
