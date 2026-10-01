@@ -344,6 +344,19 @@
   }
 }
 
+/* `translate` (not `transform`) so the hover lift does not fight the inline
+   transform framer-motion sets for the scroll reveal. */
+.hosting-plan,
+.hosting-way {
+  transition: translate 0.35s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.35s ease;
+}
+
+.hosting-plan:hover,
+.hosting-way:hover {
+  translate: 0 -5px;
+  box-shadow: 0 16px 36px -12px rgba(31, 53, 147, 0.28);
+}
+
 .hosting-terms a {
   color: var(--cobalt-deep);
 }

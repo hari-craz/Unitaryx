@@ -2,6 +2,7 @@ import { motion, useTransform } from 'framer-motion';
 import ScrollPanel from '../layout/ScrollPanel';
 import DisciplineIcon from '../common/DisciplineIcon';
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
+import { fadeUp, popIn, withMotion } from '../../lib/motion';
 import './Services.css';
 
 const SERVICES = [
@@ -41,8 +42,16 @@ export default function Services() {
     <ScrollPanel index={2} id="services" className="services-panel" wrapperClassName="services-panel-wrapper">
       {(scrollYProgress) => (
         <div className="panel-inner services-inner">
-          <span className="eyebrow">What we do</span>
-          <h2 className="gradient-headline services-title">Three disciplines, one delivery.</h2>
+          <motion.span className="eyebrow" variants={withMotion(fadeUp, reduceMotion)} custom={0}>
+            What we do
+          </motion.span>
+          <motion.h2
+            className="gradient-headline services-title"
+            variants={withMotion(fadeUp, reduceMotion)}
+            custom={0.12}
+          >
+            Three disciplines, one delivery.
+          </motion.h2>
           <div className="services-stack">
             {SERVICES.map((service, i) => (
               <ServiceCard
@@ -72,14 +81,18 @@ function ServiceCard({ service, index, scrollYProgress, reduceMotion }) {
   const x = useTransform(scrollYProgress, range, [service.x, 0]);
   const y = useTransform(scrollYProgress, range, [service.y, 0]);
   const rotate = useTransform(scrollYProgress, range, [service.rotate, 0]);
-  const opacity = useTransform(scrollYProgress, [start, start + 0.15], [0, 1]);
 
+  // Position and rotation stay scroll-scrubbed (the assembly), but opacity and
+  // scale play on a timer once the panel arrives, so the cards are never an
+  // empty panel waiting for the user to scroll.
   return (
     <motion.div
       className="services-card glass"
+      variants={withMotion(popIn, reduceMotion)}
+      custom={0.3 + index * 0.16}
       style={{
         '--stack-offset': index,
-        ...(reduceMotion ? {} : { x, y, rotate, opacity }),
+        ...(reduceMotion ? {} : { x, y, rotate }),
       }}
     >
       <DisciplineIcon type={service.icon} className="services-card-icon" />

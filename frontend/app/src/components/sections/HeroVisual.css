@@ -1,0 +1,118 @@
+.hero-visual {
+  position: absolute;
+  right: clamp(0.5rem, 4vw, 3.5rem);
+  top: 50%;
+  width: min(30vw, 24rem);
+  aspect-ratio: 1;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.hero-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px dashed rgba(47, 92, 255, 0.28);
+}
+
+.hero-ring--outer {
+  inset: 0;
+  animation: hero-spin 60s linear infinite;
+}
+
+.hero-ring--inner {
+  inset: 16%;
+  border-color: rgba(184, 135, 62, 0.35);
+  animation: hero-spin 42s linear infinite reverse;
+}
+
+.hero-orb {
+  position: absolute;
+  inset: 30%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(159, 180, 255, 0.85), rgba(47, 92, 255, 0.12) 65%, transparent 72%);
+  filter: blur(2px);
+  animation: hero-pulse 7s ease-in-out infinite;
+}
+
+.hero-chip {
+  position: absolute;
+}
+
+.hero-chip--top {
+  top: 4%;
+  left: 36%;
+}
+
+.hero-chip--right {
+  top: 44%;
+  right: -2%;
+}
+
+.hero-chip--bottom {
+  bottom: 6%;
+  left: 22%;
+}
+
+.hero-chip-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cobalt-deep);
+  animation: hero-drift 6.5s ease-in-out infinite;
+}
+
+.hero-chip-inner svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--cobalt);
+}
+
+@keyframes hero-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes hero-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+@keyframes hero-drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+/* The global reduced-motion rule only shortens animations to ~0ms; these are
+   purely decorative, so switch them off outright. */
+@media (prefers-reduced-motion: reduce) {
+  .hero-ring,
+  .hero-orb,
+  .hero-chip-inner {
+    animation: none !important;
+  }
+}
+
+@media (max-width: 1200px) {
+  .hero-visual {
+    display: none;
+  }
+}

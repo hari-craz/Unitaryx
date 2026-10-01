@@ -1,11 +1,6 @@
 import { motion } from 'framer-motion';
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 
-const container = {
-  hidden: {},
-  visible: { transition: { staggerChildren: 0.06 } },
-};
-
 const word = {
   hidden: { clipPath: 'inset(0 100% 0 0)', opacity: 0 },
   visible: {
@@ -15,7 +10,9 @@ const word = {
   },
 };
 
-export default function KineticText({ as: Tag = 'h1', text, className = '' }) {
+// `delay` (seconds) postpones the whole word-by-word reveal, so a caller can
+// slot the headline into a timed sequence.
+export default function KineticText({ as: Tag = 'h1', text, className = '', delay = 0 }) {
   const reduceMotion = usePrefersReducedMotion();
   const words = text.split(' ');
 
@@ -24,6 +21,10 @@ export default function KineticText({ as: Tag = 'h1', text, className = '' }) {
   }
 
   const MotionTag = motion[Tag] || motion.span;
+  const container = {
+    hidden: {},
+    visible: { transition: { staggerChildren: 0.06, delayChildren: delay } },
+  };
 
   return (
     <MotionTag className={className} variants={container} initial="hidden" animate="visible">
