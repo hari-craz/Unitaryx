@@ -26,7 +26,7 @@ const WAYS = [
   },
 ];
 
-const PLANS = [
+export const PLANS = [
   {
     key: 'starter',
     name: 'Starter',
@@ -85,7 +85,7 @@ const SERVICES = [
   { n: '03', title: 'Keep it running well', detail: 'Container monitoring · troubleshooting · backup options' },
 ];
 
-const ADD_ONS = [
+export const ADD_ONS = [
   { label: 'Backup', value: '₹50/mo' },
   { label: 'Custom deployment', value: '₹199' },
   { label: 'Advanced setup', value: 'Custom quote' },
@@ -216,7 +216,9 @@ export default function Hosting() {
           </div>
         </div>
 
-        <p className="hosting-terms">Static websites and Dockerized applications only. T&amp;Cs apply.</p>
+        <p className="hosting-terms">
+          Static websites and Dockerized applications only. <a href="/terms">T&amp;Cs apply.</a>
+        </p>
       </div>
     </section>
   );
