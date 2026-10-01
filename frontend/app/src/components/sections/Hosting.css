@@ -343,3 +343,7 @@
     grid-template-columns: 1fr;
   }
 }
+
+.hosting-terms a {
+  color: var(--cobalt-deep);
+}

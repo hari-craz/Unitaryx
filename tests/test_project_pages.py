@@ -145,3 +145,14 @@ def test_privacy_page_has_its_own_canonical_and_is_in_the_sitemap(client):
     assert "FAQPage" not in html
     locs = re.findall(r"<loc>(.*?)</loc>", client.get("/sitemap.xml").get_data(as_text=True))
     assert "https://unitaryx.org/privacy" in locs
+
+
+def test_terms_page_has_its_own_canonical_and_is_in_the_sitemap(client):
+    resp = client.get("/terms")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert html.count('rel="canonical"') == 1
+    assert 'href="https://unitaryx.org/terms"' in html
+    assert html.count("<title>") == 1 and "<title>Terms" in html
+    locs = re.findall(r"<loc>(.*?)</loc>", client.get("/sitemap.xml").get_data(as_text=True))
+    assert "https://unitaryx.org/terms" in locs and "https://unitaryx.org/privacy" in locs
