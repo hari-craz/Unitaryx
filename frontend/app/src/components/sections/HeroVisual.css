@@ -101,6 +101,16 @@
   }
 }
 
+/* The global reduced-motion rule only shortens animations to ~0ms; these are
+   purely decorative, so switch them off outright. */
+@media (prefers-reduced-motion: reduce) {
+  .hero-ring,
+  .hero-orb,
+  .hero-chip-inner {
+    animation: none !important;
+  }
+}
+
 @media (max-width: 1200px) {
   .hero-visual {
     display: none;

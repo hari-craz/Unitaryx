@@ -32,8 +32,8 @@ export default function Hero() {
   );
 }
 
-// Timed entrance (seconds after load): chips, then the headline's own word
-// reveal, then subtitle, buttons and highlights, so the first screen builds up
+// Timed entrance (seconds after load): chips (0.1), headline words (from 0.4,
+// finishing around 1.4), then subtitle, buttons and highlights, so the first screen builds up
 // instead of arriving all at once or sitting empty.
 const rise = (delay, reduceMotion) =>
   reduceMotion
@@ -75,12 +75,13 @@ function HeroContent({ scrollYProgress, reduceMotion }) {
         as="h1"
         className="gradient-headline hero-title"
         text="We build the systems behind ambitious ideas."
+        delay={reduceMotion ? 0 : 0.4}
       />
-      <motion.p className="hero-subtitle" {...rise(0.9, reduceMotion)}>
+      <motion.p className="hero-subtitle" {...rise(1.1, reduceMotion)}>
         Unitary X is a freelance dev studio delivering production-grade web, software, and embedded
         hardware — from first prototype to shipped product.
       </motion.p>
-      <motion.div className="hero-actions" {...rise(1.1, reduceMotion)}>
+      <motion.div className="hero-actions" {...rise(1.3, reduceMotion)}>
         <MagneticButton as="a" href="#contact">
           Start a project
         </MagneticButton>
@@ -90,7 +91,7 @@ function HeroContent({ scrollYProgress, reduceMotion }) {
       </motion.div>
       <ul className="hero-highlights">
         {HIGHLIGHTS.map((h, i) => (
-          <motion.li key={h} {...rise(1.35 + i * 0.12, reduceMotion)}>
+          <motion.li key={h} {...rise(1.55 + i * 0.12, reduceMotion)}>
             {h}
           </motion.li>
         ))}
