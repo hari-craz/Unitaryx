@@ -71,13 +71,16 @@ services:
         condition: service_started
       db:
         condition: service_healthy
-    env_file:
-      - .env.production # Optional: Portainer supports env files if they exist in repo, but it's better to use Portainer Env Vars.
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
       - CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=True
-      # Passthrough all other DB and SMTP env vars here if needed.
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-True}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-False}
     networks:
       - unitaryx_net
 
