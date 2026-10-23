@@ -275,7 +275,7 @@ talisman = Talisman(
     app,
     content_security_policy=csp,
     force_https=False, # Set to True in production with SSL
-    session_cookie_secure=False, # Set to True in production with SSL
+    session_cookie_secure=(os.getenv("COOKIE_SECURE", "False").strip().lower() in {"1", "true", "yes", "on"}),  # set COOKIE_SECURE=true behind HTTPS
     session_cookie_http_only=True,
     session_cookie_samesite='Lax',
     strict_transport_security=True,
@@ -2346,7 +2346,6 @@ def logout():
 
 
 @app.route("/api/auth/logout", methods=["POST"])
-@csrf.exempt
 def api_logout():
     end_current_session()
     return jsonify({"success": True, "message": "Logged out."})
@@ -2560,7 +2559,6 @@ def api_contact():
 
 
 @app.route('/feedback/submit', methods=['POST'])
-@csrf.exempt
 @login_required
 @limiter.limit("20 per day", methods=["POST"])
 def submit_public_feedback():
@@ -4545,7 +4543,6 @@ def admin_panel():
 
 
 @app.route('/admin/sessions/revoke/<int:session_id>', methods=['POST'])
-@csrf.exempt
 @admin_required
 def revoke_device_session(session_id):
     actor = current_user()
@@ -4578,7 +4575,6 @@ def revoke_device_session(session_id):
 
 
 @app.route('/admin/sessions/revoke-others', methods=['POST'])
-@csrf.exempt
 @admin_required
 def revoke_other_sessions():
     actor = current_user()
@@ -4600,7 +4596,6 @@ def revoke_other_sessions():
 
 
 @app.route('/admin/db-backups/create', methods=['POST'])
-@csrf.exempt
 @admin_required
 @admin_capability_required('admin_control')
 def create_db_backup():
@@ -4645,7 +4640,6 @@ def download_db_backup(filename):
 
 
 @app.route('/admin/db-backups/restore', methods=['POST'])
-@csrf.exempt
 @admin_required
 @admin_capability_required('admin_control')
 def restore_db_backup():
@@ -4687,7 +4681,6 @@ def restore_db_backup():
 
 
 @app.route('/admin/ab-tests/update/<int:test_id>', methods=['POST'])
-@csrf.exempt
 @admin_required
 @admin_capability_required('admin_control')
 def update_ab_test(test_id):
@@ -4722,7 +4715,6 @@ def update_ab_test(test_id):
 
 
 @app.route('/admin/approvals/<int:ticket_id>/approve', methods=['POST'])
-@csrf.exempt
 @admin_required
 @admin_capability_required('admin_control')
 def approve_ticket(ticket_id):
@@ -4757,7 +4749,6 @@ def approve_ticket(ticket_id):
 
 
 @app.route('/admin/approvals/<int:ticket_id>/reject', methods=['POST'])
-@csrf.exempt
 @admin_required
 @admin_capability_required('admin_control')
 def reject_ticket(ticket_id):
@@ -4786,7 +4777,6 @@ def reject_ticket(ticket_id):
 
 
 @app.route('/admin/finance/entries/create', methods=['POST'])
-@csrf.exempt
 @admin_required
 @admin_capability_required('finance_ops')
 def create_finance_entry():
@@ -4840,7 +4830,6 @@ def create_finance_entry():
 
 
 @app.route('/admin/finance/entries/<int:entry_id>/status', methods=['POST'])
-@csrf.exempt
 @admin_required
 @admin_capability_required('finance_ops')
 def update_finance_entry_status(entry_id):
@@ -4868,7 +4857,6 @@ def update_finance_entry_status(entry_id):
 
 
 @app.route('/admin/finance/entries/<int:entry_id>/review', methods=['POST'])
-@csrf.exempt
 @admin_required
 @admin_capability_required('admin_control')
 def review_finance_entry(entry_id):
@@ -4909,7 +4897,6 @@ def review_finance_entry(entry_id):
 
 
 @app.route('/admin/feedback/post', methods=['POST'])
-@csrf.exempt
 @admin_required
 def post_admin_feedback():
     actor = current_user()
@@ -4938,7 +4925,6 @@ def post_admin_feedback():
 
 
 @app.route("/admin/tasks/assign", methods=["POST"])
-@csrf.exempt
 @admin_required
 def assign_admin_task():
     creator = current_user()
@@ -4992,7 +4978,6 @@ def assign_admin_task():
 
 
 @app.route("/admin/tasks/<int:task_id>/status", methods=["POST"])
-@csrf.exempt
 @admin_required
 def update_admin_task_status(task_id):
     actor = current_user()
@@ -5025,7 +5010,6 @@ def update_admin_task_status(task_id):
 
 
 @app.route("/admin/tasks/assign-bulk", methods=["POST"])
-@csrf.exempt
 @admin_required
 def assign_admin_task_bulk():
     creator = current_user()
@@ -5100,7 +5084,6 @@ def assign_admin_task_bulk():
 
 
 @app.route("/admin/admins/create", methods=["POST"])
-@csrf.exempt
 @admin_required
 def superadmin_create_admin():
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or \
@@ -5182,7 +5165,6 @@ def superadmin_create_admin():
 
 
 @app.route("/admin/admins/<int:uid>/update", methods=["POST"])
-@csrf.exempt
 @admin_required
 def superadmin_update_admin(uid):
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or \
@@ -5296,7 +5278,6 @@ def superadmin_update_admin(uid):
 
 
 @app.route("/admin/admins/<int:uid>/delete", methods=["POST"])
-@csrf.exempt
 @admin_required
 def superadmin_delete_admin(uid):
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or \
@@ -5354,7 +5335,6 @@ def superadmin_delete_admin(uid):
 
 
 @app.route("/admin/admins/<int:uid>/reset-password", methods=["POST"])
-@csrf.exempt
 @admin_required
 def superadmin_reset_admin_password(uid):
     actor = current_user()
@@ -5391,7 +5371,6 @@ def superadmin_reset_admin_password(uid):
 
 
 @app.route("/admin/tasks/<int:task_id>/reassign", methods=["POST"])
-@csrf.exempt
 @admin_required
 def superadmin_reassign_task(task_id):
     actor = current_user()
@@ -5430,7 +5409,6 @@ def superadmin_reassign_task(task_id):
 
 
 @app.route("/admin/tasks/<int:task_id>/delete", methods=["POST"])
-@csrf.exempt
 @admin_required
 def superadmin_delete_task(task_id):
     actor = current_user()
@@ -5452,7 +5430,6 @@ def superadmin_delete_task(task_id):
 
 
 @app.route("/admin/bulk-update", methods=["POST"])
-@csrf.exempt
 @admin_required
 @admin_capability_required("lead_manage")
 def admin_bulk_update():
@@ -5508,7 +5485,6 @@ def admin_bulk_update():
 
 
 @app.route("/admin/create-user", methods=["POST"])
-@csrf.exempt
 @admin_required
 def admin_create_user():
     creator = current_user()
@@ -5552,7 +5528,6 @@ def admin_create_user():
 
 
 @app.route("/admin/update-project", methods=["POST"])
-@csrf.exempt
 @admin_required
 @admin_capability_required("lead_manage")
 def update_project():
@@ -5622,7 +5597,6 @@ def update_project():
 
 
 @app.route("/admin/delete/<int:req_id>", methods=["POST"])
-@csrf.exempt
 @admin_required
 @admin_capability_required("lead_manage")
 def delete_request(req_id):
