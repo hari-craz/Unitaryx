@@ -131,7 +131,7 @@ export default function Contact() {
             </MagneticButton>
 
             {status.state === 'success' && <p className="contact-status contact-status--ok">{status.message}</p>}
-            {status.state === 'error' && !Object.keys(status.errors).length && (
+            {status.state === 'error' && !['name', 'email', 'service', 'message'].some((k) => status.errors[k]) && (
               <p className="contact-status contact-status--error">{status.message}</p>
             )}
           </form>

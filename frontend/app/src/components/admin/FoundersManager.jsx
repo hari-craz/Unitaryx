@@ -87,8 +87,12 @@ export default function FoundersManager() {
 
   const handleDelete = async (founder) => {
     if (!window.confirm(`Delete ${founder.name}? This cannot be undone.`)) return;
-    await deleteReq(`/api/admin/founders/${founder.id}`);
-    setFounders((list) => list.filter((f) => f.id !== founder.id));
+    try {
+      await deleteReq(`/api/admin/founders/${founder.id}`);
+      setFounders((list) => list.filter((f) => f.id !== founder.id));
+    } catch (err) {
+      window.alert(err.message || 'Could not delete team member.');
+    }
   };
 
   if (!loading && denied) {

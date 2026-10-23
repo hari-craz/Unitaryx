@@ -46,7 +46,7 @@ export default function Dashboard() {
     let list = requests.filter((r) => {
       const blob = `${r.id} ${r.service} ${r.status} ${r.message}`.toLowerCase();
       const matchSearch = !q || blob.includes(q);
-      const matchStatus = status === 'all' || r.status.toLowerCase() === status;
+      const matchStatus = status === 'all' || (r.status || '').toLowerCase() === status;
       const matchUpdated = !filters.updatedOnly || r.is_updated;
       return matchSearch && matchStatus && matchUpdated;
     });
