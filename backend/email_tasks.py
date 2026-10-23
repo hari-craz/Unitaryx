@@ -19,6 +19,9 @@ if CELERY_BROKER:
         "socket_timeout": 3,
         "socket_connect_timeout": 3,
     }
+    # Mail results are never read; ignoring them stops .delay() from subscribing
+    # to the result backend, which blocks for a long time when Redis is down.
+    celery.conf.task_ignore_result = True
     celery.conf.broker_connection_retry_on_startup = False
     celery.conf.broker_connection_max_retries = 0
 
@@ -59,7 +62,7 @@ def _smtp_send_message_local(msg: EmailMessage):
 
 
 if celery:
-    @celery.task(name="unitaryx.send_email")
+    @celery.task(name="unitaryx.send_email", ignore_result=True)
     def send_email_task(subject, sender, recipient, text_body, html_body=None):
         msg = EmailMessage()
         msg["Subject"] = subject

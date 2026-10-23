@@ -11,6 +11,10 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 # would pull real SMTP creds (and other prod values) into the test process and
 # let mail-sending tests hit live SMTP. Tests must use only the env set here.
 os.environ["UNITARYX_SKIP_DOTENV_WALKUP"] = "1"
+# The repo-root .env is still loaded; blank mail/broker settings so tests never
+# reach live SMTP or a Redis broker (an empty value wins over load_dotenv).
+for _name in ("SMTP_USER", "SMTP_PASS", "SMTP_FROM", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"):
+    os.environ[_name] = ""
 
 from backend.app import (  # noqa: E402  (must import after env vars are set)
     app as flask_app,
