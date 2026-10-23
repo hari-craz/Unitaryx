@@ -43,7 +43,7 @@ export default function LeadsPanel() {
     let list = data.leads.filter((r) => {
       const blob = `${r.id} ${r.name} ${r.email} ${r.service} ${r.status} ${r.message}`.toLowerCase();
       const okSearch = !q || blob.includes(q);
-      const okStatus = filters.status === 'all' || r.status.toLowerCase() === filters.status;
+      const okStatus = filters.status === 'all' || (r.status || '').toLowerCase() === filters.status;
       return okSearch && okStatus;
     });
     list = [...list].sort((a, b) => {
@@ -89,8 +89,16 @@ export default function LeadsPanel() {
   };
 
   const saveLead = async (id, patch) => {
-    const res = await putJSON(`/api/admin/leads/${id}`, patch);
+    let res;
+    try {
+      res = await putJSON(`/api/admin/leads/${id}`, patch);
+    } catch (err) {
+      setNotice(err.message || 'Could not save the change.');
+      await load();
+      return;
+    }
     if (res.queued) {
+      await load();
       setNotice(res.message);
       setActive(null);
       return;
@@ -101,7 +109,13 @@ export default function LeadsPanel() {
 
   const deleteLead = async (lead) => {
     if (!window.confirm(`Delete inquiry #${fmtId(lead.id)} from ${lead.name}?`)) return;
-    const res = await deleteReq(`/api/admin/leads/${lead.id}`);
+    let res;
+    try {
+      res = await deleteReq(`/api/admin/leads/${lead.id}`);
+    } catch (err) {
+      setNotice(err.message || 'Could not delete the inquiry.');
+      return;
+    }
     if (res.queued) setNotice(res.message);
     else setData((d) => ({ ...d, leads: d.leads.filter((r) => r.id !== lead.id) }));
     setActive(null);

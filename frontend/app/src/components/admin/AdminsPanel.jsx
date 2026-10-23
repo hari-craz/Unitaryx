@@ -68,7 +68,8 @@ function AdminForm({ admin, scopes, onClose, onSaved }) {
           <label className="studio-field">
             {admin ? 'New password (optional)' : 'Password'}
             <input
-              type="text"
+              type="password"
+              autoComplete="new-password"
               value={form.password}
               onChange={(e) => set({ password: e.target.value })}
               placeholder={admin ? 'Leave blank to keep' : 'min 6 chars'}

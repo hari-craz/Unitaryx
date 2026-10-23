@@ -1,6 +1,8 @@
 # Production-ready GitOps Stack for Portainer
 # Deployment Method: Portainer GitOps (Repository mode)
 
+name: unitaryx
+
 services:
   # ════════════════════════════════════════════════════════════════════════════════
   # PostgreSQL Database Service
@@ -134,6 +136,8 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       GOOGLE_ALLOWED_ORIGINS: ${GOOGLE_ALLOWED_ORIGINS}
       
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
       GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
       GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}

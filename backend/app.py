@@ -102,7 +102,10 @@ OAUTH_ADMIN_EMAILS = {
 }
 
 SUPERADMIN_EMAIL = (os.getenv("SUPERADMIN_EMAIL", "harikavi1301@gmail.com") or "").strip().lower()
-SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD", "hari@123")
+_DEBUG_MODE = (os.getenv("DEBUG", "False").strip().lower() == "true")
+# Known default passwords exist only for local DEBUG runs; in production an
+# unset value yields a random unguessable password (sign in via Google / OTP reset).
+SUPERADMIN_PASSWORD = os.getenv("SUPERADMIN_PASSWORD") or ("hari@123" if _DEBUG_MODE else os.urandom(18).hex())
 SUPERADMIN_NAME = (os.getenv("SUPERADMIN_NAME") or "Super Admin").strip() or "Super Admin"
 
 
@@ -543,15 +546,15 @@ def upsert_admin_credential_record(admin_user_id, admin_email, temporary_passwor
     if record:
         record.admin_user_id = admin_user_id or record.admin_user_id
         record.admin_email = normalized_email
-        record.temporary_password = temporary_password
-        record.permanent_password = permanent_password
+        record.temporary_password = ""
+        record.permanent_password = ""  # never persist plaintext passwords
         record.updated_at = datetime.utcnow()
     else:
         record = AdminCredentialRecord(
             admin_user_id=admin_user_id,
             admin_email=normalized_email,
-            temporary_password=temporary_password,
-            permanent_password=permanent_password,
+            temporary_password="",
+            permanent_password="",
         )
         db.session.add(record)
 
@@ -577,7 +580,7 @@ def sync_admin_vault_to_latest_password(admin_user, latest_password):
         admin_user_id=admin_user.id,
         admin_email=normalized_email,
         temporary_password="",
-        permanent_password=(latest_password or "").strip(),
+        permanent_password="",
     ))
 
 
@@ -777,8 +780,13 @@ def _restore_backup_payload(payload):
     if not isinstance(tables, dict):
         raise ValueError("Invalid backup payload format.")
 
-    for model in DB_BACKUP_MODELS.values():
-        model.query.delete(synchronize_session=False)
+    if not any(isinstance(tables.get(name), list) for name in DB_BACKUP_MODELS):
+        raise ValueError("Backup contains no recognised tables; nothing was restored.")
+
+    # Only wipe tables the backup actually carries.
+    for name, model in DB_BACKUP_MODELS.items():
+        if isinstance(tables.get(name), list):
+            model.query.delete(synchronize_session=False)
 
     user_ids = {u.id for u in User.query.with_entities(User.id).all()}
 
@@ -879,6 +887,19 @@ def api_login_required(f):
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _password_policy_error(password):
+    """Single password policy shared by registration and reset."""
+    if len(password) < 6:
+        return "Password must be at least 6 characters."
+    if not any(c.isupper() for c in password):
+        return "Password must contain at least one uppercase letter (e.g. A, B, C...)."
+    if not any(c.isdigit() for c in password):
+        return "Password must contain at least one number (e.g. 1, 2, 3...)."
+    if not any(c in "@%#$!&*_-+=" for c in password):
+        return "Password must contain at least one symbol (e.g. @, %, #, $, !)."
+    return None
+
 
 def validate_email(email):
     return bool(re.match(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$', email))
@@ -1093,7 +1114,7 @@ def _record_traffic_event(event_type, payload):
         event_type=event_type,
         page_path=page_path,
         scroll_percent=scroll_percent,
-        referrer=(str(payload.get("referrer") or request.referrer or "").strip() or None),
+        referrer=(str(payload.get("referrer") or request.referrer or "").strip()[:260] or None),
         ip_address=client_ip[:64] if client_ip else None,
         user_agent=(request.user_agent.string or "")[:255] or None,
     )
@@ -1192,8 +1213,10 @@ def enforce_active_user_session():
         app.logger.exception("Session precheck failed while loading user.")
         session.clear()
         return redirect(url_for('login'))
-    if not user:
+    if not user or not user.is_active:
         session.clear()
+        if (request.path or '').startswith(('/api/', '/admin/api/')):
+            return jsonify({"success": False, "message": "Authentication required."}), 401
         return redirect(url_for('login'))
 
     token = str(session.get('session_token') or '').strip()
@@ -1210,6 +1233,8 @@ def enforce_active_user_session():
         return redirect(url_for('login'))
     if not row or not row.is_active:
         session.clear()
+        if (request.path or '').startswith(('/api/', '/admin/api/')):
+            return jsonify({"success": False, "message": "Session ended. Please sign in again."}), 401
         flash('Your session was ended from Device Manager. Please sign in again.', 'warning')
         return redirect(url_for('login'))
 
@@ -1278,7 +1303,7 @@ def admin_capability_required(capability):
         def decorated(*args, **kwargs):
             actor = current_user()
             if not has_admin_capability(capability, actor):
-                if request.is_json or request.headers.get('Accept') == 'application/json':
+                if wants_json_response() or request.path.startswith(('/api/', '/admin/api/')):
                     return jsonify({"success": False, "message": "Insufficient permission for this action."}), 403
                 flash("Insufficient permission for this action.", "danger")
                 return redirect(url_for('admin_panel'))
@@ -1442,7 +1467,7 @@ def _cleanup_expired_otps():
 
 
 def _generate_otp_code():
-    return f"{random.randint(0, 999999):06d}"
+    return f"{secrets.randbelow(1000000):06d}"
 
 
 def _save_otp_for_email(email, otp_code):
@@ -1574,7 +1599,7 @@ def _send_password_reset_otp(email, otp_code):
 def seed_data():
     # Default admin from .env
     admin_email = os.getenv("ADMIN_EMAIL", "admin@unitaryx.com")
-    admin_pass = os.getenv("ADMIN_PASS", "Admin@123")
+    admin_pass = os.getenv("ADMIN_PASS") or ("Admin@123" if _DEBUG_MODE else os.urandom(18).hex())
     
     if not User.query.filter_by(email=admin_email).first():
         admin = User(name='Unitary X Admin',
@@ -1990,15 +2015,11 @@ def login():
             error = "Your account has been deactivated. Contact admin."
             if is_ajax: return jsonify({"success": False, "error": error})
             tab   = login_type
-        elif login_type == 'admin' and normalize_role(user.role) != 'admin':
-            # Auto-recover role when the email is a managed admin identity.
-            if is_admin_identity(email, existing_user=user):
-                user.role = 'admin'
-                db.session.commit()
-            else:
-                error = "You don't have admin privileges."
-                if is_ajax: return jsonify({"success": False, "error": error})
-                tab   = 'admin'
+        elif login_type == 'admin' and normalize_role(user.role) != 'admin' \
+                and not is_admin_identity(email, existing_user=user):
+            error = "You don't have admin privileges."
+            if is_ajax: return jsonify({"success": False, "error": error})
+            tab   = 'admin'
         else:
             normalized_role = normalize_role(user.role)
             if is_admin_identity(email, existing_user=user):
@@ -2072,7 +2093,7 @@ def register():
             error = "Password must contain at least one symbol (e.g. @, %, #, $, !)."
         elif password != confirm:
             error = "Passwords do not match."
-        elif User.query.filter_by(email=email).first():
+        elif User.query.filter_by(email=email).first() or is_admin_identity(email):
             error = "An account with this email already exists."
         
         if error:
@@ -2086,10 +2107,8 @@ def register():
                 _send_welcome_email(email, name)
             except Exception:
                 app.logger.exception("Failed to send welcome email")
-            session['user_id']   = user.id
-            session['user_name'] = user.name
-            session['role']      = user.role
-            
+            establish_session_for_user(user, remember=False)
+
             target = url_for('user_dashboard')
             if is_ajax:
                 return jsonify({"success": True, "redirect": target})
@@ -2166,8 +2185,9 @@ def forgot_password_reset():
 
     if not validate_email(email):
         return jsonify({"success": False, "error": "Please enter a valid email address."}), 400
-    if len(new_password) < 6:
-        return jsonify({"success": False, "error": "Password must be at least 6 characters."}), 400
+    policy_error = _password_policy_error(new_password)
+    if policy_error:
+        return jsonify({"success": False, "error": policy_error}), 400
 
     _cleanup_expired_otps()
     payload = _get_active_otp(email)
@@ -2198,6 +2218,8 @@ def forgot_password_reset():
     user.set_password(new_password)
     if normalize_role(user.role) == 'admin':
         sync_admin_vault_to_latest_password(user, new_password)
+    # A password reset signs the account out everywhere.
+    UserSession.query.filter_by(user_id=user.id, is_active=True).update({"is_active": False}, synchronize_session=False)
     db.session.delete(payload)
     if not _safe_commit():
         return jsonify({"success": False, "error": "Server busy. Please try again."}), 503
@@ -2259,6 +2281,8 @@ def google_login():
         is_oauth_admin = is_admin_identity(email)
         
         user = find_user_by_email(email)
+        if user and not user.is_active:
+            return jsonify({"success": False, "error": "Your account has been deactivated. Contact admin."}), 403
         if not user:
             user = User(
                 name=name,
@@ -2430,12 +2454,12 @@ def _customer_request_dict(req, is_updated):
 def api_dashboard_requests():
     user = current_user()
     normalized_email = (user.email or "").strip().lower()
-    my_requests = ProjectRequest.query.filter(
-        db.or_(
-            ProjectRequest.user_id == user.id,
-            db.func.lower(ProjectRequest.email) == normalized_email,
-        )
-    ).order_by(ProjectRequest.created_at.desc()).all()
+    # Email matching is only trusted for Google sign-ins (verified email);
+    # password accounts are unverified, so they see only requests linked by id.
+    conditions = [ProjectRequest.user_id == user.id]
+    if session.get("auth_provider") == "google":
+        conditions.append(db.func.lower(ProjectRequest.email) == normalized_email)
+    my_requests = ProjectRequest.query.filter(db.or_(*conditions)).order_by(ProjectRequest.created_at.desc()).all()
 
     active_updates = {r.id for r in my_requests if r.is_new_update}
 
@@ -3234,7 +3258,8 @@ def admin_traffic_summary():
 
     avg_scroll_depth = db.session.query(db.func.avg(scroll_max_subq.c.max_scroll)).scalar() or 0
 
-    users = User.query.order_by(User.created_at.desc()).all()
+    registered_total = User.query.count()
+    users = User.query.order_by(User.created_at.desc()).limit(50).all()
     recent_users = [
         {
             "name": (u.name or "").strip() or "Unknown",
@@ -3250,7 +3275,7 @@ def admin_traffic_summary():
         "unique_visitors_today": int(unique_visitors_today),
         "today_scrolled": int(today_scrolled),
         "avg_scroll_depth": round(float(avg_scroll_depth), 1),
-        "registered_total": len(users),
+        "registered_total": registered_total,
         "registered_users": recent_users,
     })
 
@@ -3829,6 +3854,11 @@ def api_admin_finance_status(entry_id):
             "success": False,
             "message": "You can update only your assigned finance items.",
         }), 403
+    if not is_super_admin(actor) and (requested in {"closed", "rejected"} or entry.status in {"closed", "rejected"}):
+        return jsonify({
+            "success": False,
+            "message": "Closing or reopening an entry needs superadmin review.",
+        }), 403
 
     entry.status = requested
     if requested == "needs_superadmin_check":
@@ -3987,8 +4017,8 @@ def api_admin_leads():
 
     rows = ProjectRequest.query.order_by(ProjectRequest.created_at.desc()).all()
     # Same freshness maintenance the classic admin panel performs on load.
-    _apply_stale_followup_policy(rows)
-    scores_updated = False
+    policy = _apply_stale_followup_policy(rows)
+    scores_updated = bool(policy.get("changed"))
     for row in rows:
         if row.lead_last_scored_at is None:
             _score_project_request(row)
@@ -4034,12 +4064,23 @@ def api_admin_lead_update(req_id):
         value = req.value or 0
     message = data.get("message", None)
 
+    status_map = {"new": "New", "in progress": "In Progress", "done": "Done"}
+    priority_map = {"low": "Low", "medium": "Medium", "high": "High"}
+    status = status_map.get(str(status or "").strip().lower())
+    priority = priority_map.get(str(priority or "").strip().lower())
+    if not status or not priority:
+        return jsonify({"success": False, "message": "Invalid status or priority."}), 400
+
+    # Approval is needed only when a change moves the lead INTO a sensitive
+    # state, not whenever an already-sensitive lead is touched.
     requires_approval = (not is_super_admin(actor)) and (
-        str(status or "").strip().lower() == "done"
-        or str(priority or "").strip().lower() == "high"
-        or int(value or 0) >= 20000
+        (status.lower() == "done" and (req.status or "").lower() != "done")
+        or (priority.lower() == "high" and (req.priority or "").lower() != "high")
+        or (int(value or 0) >= 20000 and int(value or 0) != int(req.value or 0))
     )
     if requires_approval:
+        if "internal_notes" in data:  # notes are not sensitive; never drop them
+            req.internal_notes = str(data.get("internal_notes") or "").strip() or None
         ticket = _queue_approval_ticket(
             action_key="project_update",
             payload={
@@ -4224,7 +4265,19 @@ def api_admin_admins_update(uid):
     if not target or target.role != "admin":
         return jsonify({"success": False, "message": "Selected account is not an admin."}), 404
 
+    target_is_primary = normalize_email(target.email) == normalize_email(SUPERADMIN_EMAIL)
+    if target_is_primary and normalize_email(actor.email) != normalize_email(SUPERADMIN_EMAIL):
+        return jsonify({"success": False, "message": "Only the primary superadmin can edit this account."}), 403
+
     data = request_payload()
+    if target_is_primary:
+        if "email" in data and normalize_email(data.get("email")) != normalize_email(target.email):
+            return jsonify({"success": False, "message": "Superadmin email cannot be changed."}), 400
+        if "is_active" in data and not data.get("is_active"):
+            return jsonify({"success": False, "message": "Superadmin cannot be deactivated."}), 400
+        data = {k: v for k, v in data.items() if k != "admin_scope"}
+    if "is_active" in data and target.id == actor.id and not data.get("is_active"):
+        return jsonify({"success": False, "message": "You cannot deactivate your own account."}), 400
     if "name" in data:
         name = str(data.get("name", "")).strip()
         if len(name) < 2:
@@ -4276,6 +4329,11 @@ def api_admin_admins_delete(uid):
     AdminCredentialRecord.query.filter(
         db.func.lower(AdminCredentialRecord.admin_email) == target_email
     ).delete(synchronize_session=False)
+    # Detach/remove rows holding a foreign key to this user so Postgres accepts the delete.
+    UserSession.query.filter_by(user_id=target.id).delete(synchronize_session=False)
+    PublicFeedback.query.filter_by(user_id=target.id).delete(synchronize_session=False)
+    ProjectRequest.query.filter_by(user_id=target.id).update({"user_id": None}, synchronize_session=False)
+    SiteTrafficEvent.query.filter_by(user_id=target.id).update({"user_id": None}, synchronize_session=False)
     log_superadmin_action(action="ADMIN_DELETED", target=target_email, details=f"uid={target.id}", actor=actor)
     db.session.delete(target)
     db.session.commit()
@@ -4293,6 +4351,9 @@ def api_admin_admins_reset_password(uid):
     target = User.query.get(uid)
     if not target or target.role != "admin":
         return jsonify({"success": False, "message": "Selected account is not an admin."}), 404
+    if normalize_email(target.email) == normalize_email(SUPERADMIN_EMAIL) \
+            and normalize_email(actor.email) != normalize_email(SUPERADMIN_EMAIL):
+        return jsonify({"success": False, "message": "Only the primary superadmin can reset this password."}), 403
 
     temp_password = os.urandom(6).hex()
     target.set_password(temp_password)
@@ -5833,6 +5894,12 @@ def export_pdf():
     return response
 
 
+def _csv_safe(value):
+    """Neutralise spreadsheet formulas in user-supplied cells."""
+    text_value = str(value if value is not None else "")
+    return "'" + text_value if text_value[:1] in ("=", "+", "-", "@", "\t", "\r") else text_value
+
+
 @app.route("/admin/export/csv")
 @admin_required
 @admin_capability_required("export_data")
@@ -5849,11 +5916,11 @@ def export_csv():
     for r in requests_list:
         writer.writerow([
             f"#{r.id:04d}",
-            r.name,
-            r.email,
-            r.phone or "",
-            r.service,
-            r.deadline or "",
+            _csv_safe(r.name),
+            _csv_safe(r.email),
+            _csv_safe(r.phone or ""),
+            _csv_safe(r.service),
+            _csv_safe(r.deadline or ""),
             r.status,
             r.priority,
             r.value or 0,
@@ -5881,7 +5948,14 @@ def chart_data():
 @app.route("/admin/toggle-user/<int:uid>", methods=["POST"])
 @admin_required
 def toggle_user(uid):
+    actor = current_user()
+    if not is_super_admin(actor):
+        flash("Only the superadmin can activate or deactivate accounts.", "danger")
+        return redirect(url_for("admin_panel"))
     user = User.query.get_or_404(uid)
+    if user.id == actor.id or normalize_email(user.email) == normalize_email(SUPERADMIN_EMAIL):
+        flash("This account cannot be deactivated.", "danger")
+        return redirect(url_for("admin_panel"))
     user.is_active = not user.is_active
     db.session.commit()
     return redirect(url_for("admin_panel"))
@@ -5906,9 +5980,9 @@ def initialize_database():
             db.create_all()
             _ensure_schema_columns()
             seed_data()
-            AdminCredentialRecord.query.filter(AdminCredentialRecord.temporary_password != "").update(
-                {"temporary_password": ""}, synchronize_session=False
-            )
+            AdminCredentialRecord.query.filter(
+                (AdminCredentialRecord.temporary_password != "") | (AdminCredentialRecord.permanent_password != "")
+            ).update({"temporary_password": "", "permanent_password": ""}, synchronize_session=False)
             db.session.commit()
         except IntegrityError as exc:
             # When multiple workers start at once, table creation can race once; recover gracefully.
@@ -5952,8 +6026,6 @@ if __name__ == "__main__":
         print("  [*]  Main Site : http://127.0.0.1:10003")
         print("  [*]  Login     : http://127.0.0.1:10003/login")
         print("  [*]  Admin     : http://127.0.0.1:10003/admin")
-        print("  [*]  Admin creds: admin@unitaryx.com / Admin@123")
-        print("  [*]  Superadmin: harikavi1301@gmail.com / hari@123")
         print("="*58 + "\n")
     app.run(
         host='0.0.0.0',

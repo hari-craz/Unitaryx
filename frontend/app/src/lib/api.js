@@ -27,12 +27,32 @@ export async function apiFetch(path, options = {}) {
     }
   }
 
-  const response = await fetch(path, {
+  let response = await fetch(path, {
     ...options,
     method,
     headers,
     credentials: 'same-origin',
   });
+
+  // Stale CSRF token (new session, rotated cookie): fetch a fresh one and retry once.
+  if (response.status === 403 && WRITE_METHODS.has(method) && !options._retried) {
+    csrfTokenPromise = null;
+    const fresh = await getCsrfToken();
+    if (fresh) {
+      return apiFetch(path, { ...options, headers: { ...headers, 'X-CSRFToken': fresh }, _retried: true });
+    }
+  }
+
+  // An ended session makes the server redirect to the HTML login page.
+  const sessionEnded =
+    response.status === 401 || (response.redirected && new URL(response.url).pathname.startsWith('/login'));
+  if (sessionEnded) {
+    csrfTokenPromise = null;
+    const error = new Error('Your session has ended. Please sign in again.');
+    error.status = 401;
+    error.errors = {};
+    throw error;
+  }
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
