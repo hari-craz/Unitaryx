@@ -275,7 +275,7 @@ talisman = Talisman(
     app,
     content_security_policy=csp,
     force_https=False, # Set to True in production with SSL
-    session_cookie_secure=False, # Set to True in production with SSL
+    session_cookie_secure=(os.getenv("COOKIE_SECURE", "False").strip().lower() in {"1", "true", "yes", "on"}),  # set COOKIE_SECURE=true behind HTTPS
     session_cookie_http_only=True,
     session_cookie_samesite='Lax',
     strict_transport_security=True,
@@ -289,7 +289,8 @@ limiter = Limiter(
     key_func=get_remote_address,
     app=app,
     default_limits=["10000 per day", "2000 per hour"],
-    storage_uri="memory://"
+    # Shared store (e.g. redis://redis:6379/2) makes limits hold across Gunicorn workers.
+    storage_uri=(os.getenv("RATELIMIT_STORAGE_URI") or "memory://"),
 )
 
 
@@ -1985,7 +1986,7 @@ def index(path):
 
 @app.route("/login", methods=["GET", "POST"])
 @csrf.exempt
-@limiter.limit("100 per minute", methods=["POST"]) # Increased for development/testing
+@limiter.limit("20 per minute", methods=["POST"])
 def login():
     if request.method == "GET" and 'user_id' in session:
         return redirect(url_for('admin_panel') if session.get('role') == 'admin'
@@ -2346,7 +2347,6 @@ def logout():
 
 
 @app.route("/api/auth/logout", methods=["POST"])
-@csrf.exempt
 def api_logout():
     end_current_session()
     return jsonify({"success": True, "message": "Logged out."})
@@ -2560,7 +2560,6 @@ def api_contact():
 
 
 @app.route('/feedback/submit', methods=['POST'])
-@csrf.exempt
 @login_required
 @limiter.limit("20 per day", methods=["POST"])
 def submit_public_feedback():

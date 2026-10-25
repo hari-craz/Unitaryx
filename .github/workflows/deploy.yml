@@ -6,6 +6,9 @@ on:
       - main
     tags:
       - 'v*.*.*'
+  pull_request:
+    branches:
+      - main
 
 env:
   REGISTRY: ghcr.io
@@ -37,13 +40,28 @@ jobs:
           # Exit-zero treats all errors as warnings
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-      - name: Run Pytest
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/app/package-lock.json
+
+      - name: Build frontend (tests serve the built SPA shell)
+        working-directory: frontend/app
         run: |
-          pytest tests/ || echo "Tests failed or no tests found, but proceeding."
+          npm ci
+          npm run build
+
+      - name: Run Pytest
+        env:
+          SECRET_KEY: ci-test-secret
+        run: pytest tests/
 
   build-and-push:
     name: Build & Push Image
     needs: lint-and-test
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
