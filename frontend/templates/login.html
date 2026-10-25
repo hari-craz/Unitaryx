@@ -49,8 +49,8 @@
             </header>
 
             <nav class="auth-tabs" aria-label="Authentication Tabs">
-                <button type="button" id="tab-user" class="auth-tab active" onclick="switchTab('user')">Sign In</button>
-                <button type="button" id="tab-register" class="auth-tab" onclick="switchTab('register')">Sign
+                <button type="button" id="tab-user" class="auth-tab active">Sign In</button>
+                <button type="button" id="tab-register" class="auth-tab">Sign
                     Up</button>
             </nav>
 
@@ -188,8 +188,7 @@
 
     <div id="forgot-modal" class="otp-modal" aria-hidden="true">
         <div class="otp-modal-card" role="dialog" aria-modal="true" aria-labelledby="otp-title">
-            <button type="button" id="forgot-close" class="otp-close" aria-label="Close reset password dialog"
-                onclick="toggleForgotModal(false); return false;">
+            <button type="button" id="forgot-close" class="otp-close" aria-label="Close reset password dialog">
                 <i class="fas fa-xmark"></i>
             </button>
             <h3 id="otp-title">Reset Password</h3>
@@ -273,7 +272,7 @@
     </div>
 
     <script src="{{ url_for('static', filename='traffic_tracker.js') }}"></script>
-    <script>
+    <script nonce="{{ csp_nonce() }}">
         let forgotResetController = null;
         let otpTimerIntervalId = null;
 
@@ -761,6 +760,11 @@
                     toggleForgotModal(true);
                 });
             }
+
+            ["user", "register"].forEach(function (name) {
+                const tabBtn = document.getElementById("tab-" + name);
+                if (tabBtn) tabBtn.addEventListener("click", function () { switchTab(name); });
+            });
 
             const forgotClose = document.getElementById("forgot-close");
             if (forgotClose) {

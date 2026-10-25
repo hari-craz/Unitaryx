@@ -238,14 +238,21 @@ csp = {
     ],
     'img-src': ['\'self\'', 'data:', '*', 'https://www.google.com', 'https://translate.googleapis.com'],
     'media-src': ['\'self\'', 'https://cdn.pixabay.com', 'data:', '*'],
+    # Vite inlines small font files as data: URIs; without this they are blocked.
+    'font-src': [
+        '\'self\'',
+        'data:',
+        'https://fonts.gstatic.com',
+        'https://cdnjs.cloudflare.com',
+        'https://use.fontawesome.com',
+        'https://cdn.jsdelivr.net',
+    ],
+    # No 'unsafe-inline' / 'unsafe-eval': the one inline script (login page) carries
+    # a per-request nonce via csp_nonce(); the React bundle is external.
     'script-src': [
         '\'self\'',
-        '\'unsafe-inline\'',
-        '\'unsafe-eval\'',
         'https://cdnjs.cloudflare.com',
         'https://cdn.jsdelivr.net',
-        'https://translate.google.com',
-        'https://translate.googleapis.com',
         'https://accounts.google.com'
     ],
     'style-src': [
@@ -274,6 +281,7 @@ csp = {
 talisman = Talisman(
     app,
     content_security_policy=csp,
+    content_security_policy_nonce_in=['script-src'],
     force_https=False, # Set to True in production with SSL
     session_cookie_secure=(os.getenv("COOKIE_SECURE", "False").strip().lower() in {"1", "true", "yes", "on"}),  # set COOKIE_SECURE=true behind HTTPS
     session_cookie_http_only=True,
