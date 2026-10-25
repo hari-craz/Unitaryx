@@ -781,17 +781,19 @@ def _restore_backup_payload(payload):
     if not isinstance(tables, dict):
         raise ValueError("Invalid backup payload format.")
 
-    if not any(isinstance(tables.get(name), list) for name in DB_BACKUP_MODELS):
+    # The audit trail is append-only: a restore never replaces it.
+    restorable = {n: m for n, m in DB_BACKUP_MODELS.items() if n != "admin_audit_logs"}
+    if not any(isinstance(tables.get(name), list) for name in restorable):
         raise ValueError("Backup contains no recognised tables; nothing was restored.")
 
     # Only wipe tables the backup actually carries.
-    for name, model in DB_BACKUP_MODELS.items():
+    for name, model in restorable.items():
         if isinstance(tables.get(name), list):
             model.query.delete(synchronize_session=False)
 
     user_ids = {u.id for u in User.query.with_entities(User.id).all()}
 
-    for table_name, model in DB_BACKUP_MODELS.items():
+    for table_name, model in restorable.items():
         rows = tables.get(table_name, [])
         if not isinstance(rows, list):
             continue
@@ -1315,7 +1317,7 @@ def admin_capability_required(capability):
 
 def log_superadmin_action(action, target="", details="", actor=None):
     actor = actor or current_user()
-    if not actor or not is_super_admin(actor):
+    if not actor or normalize_role(getattr(actor, "role", "user")) != "admin":
         return
     db.session.add(AdminAuditLog(
         actor_email=(actor.email or "").strip().lower(),
@@ -1337,6 +1339,12 @@ def _queue_approval_ticket(action_key, payload, actor, reason=""):
         status='pending',
     )
     db.session.add(ticket)
+    log_superadmin_action(
+        action="APPROVAL_QUEUED",
+        target=f"{(action_key or '').strip()[:60]}",
+        details=(reason or "")[:300],
+        actor=actor,
+    )
     db.session.commit()
     return ticket
 
@@ -1345,8 +1353,7 @@ def _apply_project_update_values(req, status, priority, value, message):
     req.status = status
     req.priority = priority
     req.value = int(value or 0)
-    if message is not None:
-        req.message = message
+    # The customer's original message is never editable by admins.
     req.is_new_update = True
 
     if (req.status or '').strip().lower() == 'done':
@@ -2845,6 +2852,85 @@ def api_admin_newsletter_export():
     return resp
 
 
+def _clean_int(value, default=0, minimum=-1_000_000, maximum=1_000_000):
+    if value is None or value == "":
+        return default
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("Expected a whole number.")
+    return max(minimum, min(maximum, number))
+
+
+def _clean_rating(value, default=5.0):
+    if value is None or value == "":
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("Rating must be a number.")
+    if number != number or number in (float("inf"), float("-inf")):
+        raise ValueError("Rating must be a number.")
+    return max(0.0, min(5.0, number))
+
+
+def _clean_photo_url(value):
+    text_value = str(value or "").strip()
+    if not text_value:
+        return None
+    if len(text_value) > 300:
+        raise ValueError("Photo URL is too long.")
+    if text_value.startswith("/static/uploads/") or re.match(r"^https?://", text_value, re.I):
+        return text_value
+    raise ValueError("Photo URL must be an uploaded image or an http(s) link.")
+
+
+def _clean_socials(value):
+    if not isinstance(value, dict):
+        return None
+    cleaned = {}
+    for label, url in value.items():
+        url = str(url or "").strip()
+        if not url:
+            continue
+        if not re.match(r"^https?://", url, re.I):
+            raise ValueError(f"Social link for {str(label)[:30]} must start with http:// or https://.")
+        cleaned[str(label)[:30]] = url[:300]
+    return json.dumps(cleaned) if cleaned else None
+
+
+UPLOAD_ROOT = os.path.join(PROJECT_ROOT, "frontend", "static", "uploads")
+
+
+def _remove_local_upload(url):
+    """Delete an uploaded image file that is no longer referenced. Only files
+    inside the uploads folder can ever be removed."""
+    url = str(url or "")
+    prefix = "/static/uploads/"
+    if not url.startswith(prefix):
+        return
+    target = os.path.realpath(os.path.join(UPLOAD_ROOT, url[len(prefix):]))
+    if not target.startswith(os.path.realpath(UPLOAD_ROOT) + os.sep):
+        return
+    still_used = (
+        Founder.query.filter_by(photo_url=url).first() or Project.query.filter_by(photo_url=url).first()
+    )
+    if still_used:
+        return
+    try:
+        os.remove(target)
+    except OSError:
+        pass
+
+
+@app.errorhandler(ValueError)
+def _handle_admin_value_error(exc):
+    if (request.path or "").startswith("/api/admin/"):
+        db.session.rollback()
+        return jsonify({"success": False, "message": str(exc) or "Invalid value."}), 400
+    raise exc
+
+
 # ─── API — Founders / Team ─────────────────────────────────────────────────────
 
 @app.route("/api/founders")
@@ -2876,9 +2962,9 @@ def api_admin_founders_create():
         name=name,
         role=role,
         bio=str(data.get("bio", "")).strip() or None,
-        photo_url=str(data.get("photo_url", "")).strip() or None,
-        socials=json.dumps(data.get("socials")) if isinstance(data.get("socials"), dict) else None,
-        display_order=int(data.get("display_order", max_order + 1)),
+        photo_url=_clean_photo_url(data.get("photo_url")),
+        socials=_clean_socials(data.get("socials")),
+        display_order=_clean_int(data.get("display_order"), max_order + 1),
         active=bool(data.get("active", True)),
     )
     db.session.add(founder)
@@ -2907,17 +2993,19 @@ def api_admin_founders_update(founder_id):
         founder.role = role
     if "bio" in data:
         founder.bio = str(data.get("bio", "")).strip() or None
+    old_photo = founder.photo_url
     if "photo_url" in data:
-        founder.photo_url = str(data.get("photo_url", "")).strip() or None
+        founder.photo_url = _clean_photo_url(data.get("photo_url"))
     if "socials" in data:
-        socials = data.get("socials")
-        founder.socials = json.dumps(socials) if isinstance(socials, dict) else None
+        founder.socials = _clean_socials(data.get("socials"))
     if "display_order" in data:
-        founder.display_order = int(data.get("display_order") or 0)
+        founder.display_order = _clean_int(data.get("display_order"))
     if "active" in data:
         founder.active = bool(data.get("active"))
 
     db.session.commit()
+    if old_photo and old_photo != founder.photo_url:
+        _remove_local_upload(old_photo)
     return jsonify({"success": True, "founder": founder.to_dict()})
 
 
@@ -2928,8 +3016,10 @@ def api_admin_founders_delete(founder_id):
     founder = Founder.query.get(founder_id)
     if not founder:
         return jsonify({"success": False, "message": "Founder not found."}), 404
+    old_photo = founder.photo_url
     db.session.delete(founder)
     db.session.commit()
+    _remove_local_upload(old_photo)
     return jsonify({"success": True})
 
 
@@ -2997,12 +3087,12 @@ def api_admin_projects_create():
         tags=tags or None,
         price=str(data.get("price", "")).strip() or None,
         duration=str(data.get("duration", "")).strip() or None,
-        rating=float(data.get("rating", 5.0) or 5.0),
+        rating=_clean_rating(data.get("rating")),
         icon=str(data.get("icon", "")).strip() or None,
         bg_class=str(data.get("bg_class", "")).strip() or None,
         featured=bool(data.get("featured", False)),
-        display_order=int(data.get("display_order", max_order + 1)),
-        photo_url=str(data.get("photo_url", "")).strip() or None,
+        display_order=_clean_int(data.get("display_order"), max_order + 1),
+        photo_url=_clean_photo_url(data.get("photo_url")),
         problem=_clean_case_text(data.get("problem")),
         approach=_clean_case_text(data.get("approach")),
         outcome=_clean_case_text(data.get("outcome")),
@@ -3047,7 +3137,7 @@ def api_admin_projects_update(project_id):
     if "duration" in data:
         project.duration = str(data.get("duration", "")).strip() or None
     if "rating" in data:
-        project.rating = float(data.get("rating") or 5.0)
+        project.rating = _clean_rating(data.get("rating"))
     if "icon" in data:
         project.icon = str(data.get("icon", "")).strip() or None
     if "bg_class" in data:
@@ -3055,9 +3145,10 @@ def api_admin_projects_update(project_id):
     if "featured" in data:
         project.featured = bool(data.get("featured"))
     if "display_order" in data:
-        project.display_order = int(data.get("display_order") or 0)
+        project.display_order = _clean_int(data.get("display_order"))
+    old_photo = project.photo_url
     if "photo_url" in data:
-        project.photo_url = str(data.get("photo_url", "")).strip() or None
+        project.photo_url = _clean_photo_url(data.get("photo_url"))
     for field in CASE_STUDY_TEXT_FIELDS:
         if field in data:
             setattr(project, field, _clean_case_text(data.get(field)))
@@ -3065,6 +3156,8 @@ def api_admin_projects_update(project_id):
         project.stack = _clean_stack(data.get("stack"))
 
     db.session.commit()
+    if old_photo and old_photo != project.photo_url:
+        _remove_local_upload(old_photo)
     return jsonify({"success": True, "project": project.to_dict()})
 
 
@@ -3075,8 +3168,10 @@ def api_admin_projects_delete(project_id):
     project = Project.query.get(project_id)
     if not project:
         return jsonify({"success": False, "message": "Project not found."}), 404
+    old_photo = project.photo_url
     db.session.delete(project)
     db.session.commit()
+    _remove_local_upload(old_photo)
     return jsonify({"success": True})
 
 
@@ -3108,6 +3203,7 @@ def api_admin_projects_reorder():
 
 ALLOWED_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+MAX_UPLOAD_PIXELS = 40_000_000  # reject decompression bombs before decoding
 UPLOAD_MAX_DIMENSIONS = {"founders": 1600, "projects": 1200}
 
 
@@ -3134,6 +3230,9 @@ def api_admin_upload():
     from io import BytesIO
     try:
         probe = Image.open(BytesIO(raw))
+        width, height = probe.size
+        if width * height > MAX_UPLOAD_PIXELS:
+            return jsonify({"success": False, "message": "Image dimensions are too large."}), 400
         probe.verify()
         image = Image.open(BytesIO(raw))
         image.load()
@@ -3170,7 +3269,7 @@ def api_admin_upload():
         return jsonify({"success": True, "url": f"/static/uploads/{kind}/{filename}"}), 201
     except Exception as e:
         app.logger.exception("Failed to process and save uploaded image")
-        return jsonify({"success": False, "message": f"Failed to save image: {str(e)}"}), 500
+        return jsonify({"success": False, "message": "Failed to save image."}), 500
 
 
 @app.route("/api/traffic/page-view", methods=["POST"])
