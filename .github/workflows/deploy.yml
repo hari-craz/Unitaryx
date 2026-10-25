@@ -6,6 +6,9 @@ on:
       - main
     tags:
       - 'v*.*.*'
+  pull_request:
+    branches:
+      - main
 
 env:
   REGISTRY: ghcr.io
@@ -58,6 +61,7 @@ jobs:
   build-and-push:
     name: Build & Push Image
     needs: lint-and-test
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
