@@ -262,7 +262,7 @@ csp = {
         'https://fonts.googleapis.com',
         'https://use.fontawesome.com',
         'https://cdn.jsdelivr.net',
-        'https://translate.googleapis.com'
+        'https://accounts.google.com/gsi/style'
     ],
     'connect-src': [
         '\'self\'',
