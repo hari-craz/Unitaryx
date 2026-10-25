@@ -12,7 +12,7 @@
         rel="stylesheet" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
     {% if google_signin_enabled %}
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script data-cfasync="false" src="https://accounts.google.com/gsi/client" async defer></script>
     {% endif %}
     <link rel="stylesheet" href="{{ url_for('static', filename='login.css') }}?v={{ range(1000, 9999) | random }}" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
@@ -271,8 +271,10 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='traffic_tracker.js') }}"></script>
-    <script nonce="{{ csp_nonce() }}">
+    <script data-cfasync="false" src="{{ url_for('static', filename='traffic_tracker.js') }}"></script>
+    {# data-cfasync="false": Cloudflare Rocket Loader would otherwise re-inject this
+       inline script without its CSP nonce and the browser would block it. #}
+    <script data-cfasync="false" nonce="{{ csp_nonce() }}">
         let forgotResetController = null;
         let otpTimerIntervalId = null;
 
