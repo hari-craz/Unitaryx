@@ -19,7 +19,7 @@ def test_login_inline_script_carries_matching_nonce(client):
     response = client.get("/login")
     nonce = re.search(r"'nonce-([^']+)'", _script_src(response)).group(1)
     html = response.get_data(as_text=True)
-    assert re.search(rf'<script nonce="{re.escape(nonce)}"[^>]*>', html)
+    assert re.search(rf'<script[^>]* nonce="{re.escape(nonce)}"[^>]*>', html)
     assert not re.search(r"\sonclick=", html)
 
 
@@ -32,3 +32,6 @@ def test_login_scripts_opt_out_of_cloudflare_rocket_loader(client):
     assert scripts
     for tag in scripts:
         assert 'data-cfasync="false"' in tag, tag
+        # Cloudflare only honours the opt-out when it comes before src.
+        if " src=" in tag:
+            assert tag.index('data-cfasync="false"') < tag.index(" src="), tag
