@@ -56,7 +56,7 @@ jobs:
       - name: Run Pytest
         env:
           SECRET_KEY: ci-test-secret
-        run: pytest tests/
+        run: python -m pytest tests/
 
   build-and-push:
     name: Build & Push Image
