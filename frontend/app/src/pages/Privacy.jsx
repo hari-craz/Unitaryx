@@ -68,7 +68,9 @@ export default function Privacy() {
             <h2>Cookies</h2>
             <p>
               We use a session cookie that keeps you signed in and a security cookie that protects forms against
-              forged requests. We do not use advertising or cross-site tracking cookies.
+              forged requests. We also set a random visitor identifier cookie that tells us which wording of a button
+              you were shown, so we can compare which version works better. It holds no personal information. We do
+              not use advertising or cross-site tracking cookies.
             </p>
           </section>
 

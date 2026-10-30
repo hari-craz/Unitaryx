@@ -398,6 +398,23 @@ class ABTestConfig(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class ABTestEvent(db.Model):
+    """One exposure and at most one conversion per visitor per experiment. The
+    variant is stored as it was when the event happened so results stay correct
+    if the allocation is changed later."""
+    __tablename__ = 'ab_test_events'
+    __table_args__ = (
+        db.UniqueConstraint('test_key', 'visitor_id', 'event_type', name='uq_ab_test_event'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    test_key = db.Column(db.String(60), nullable=False, index=True)
+    variant = db.Column(db.String(1), nullable=False)
+    visitor_id = db.Column(db.String(80), nullable=False, index=True)
+    event_type = db.Column(db.String(12), nullable=False)  # exposure | conversion
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
 class SiteTrafficEvent(db.Model):
     """Stores anonymous and signed-in traffic events for analytics."""
     __tablename__ = 'site_traffic_events'
@@ -3620,6 +3637,67 @@ def resolve_ab_tests():
     return res
 
 
+AB_EVENT_TYPES = {"exposure", "conversion"}
+
+
+@app.route('/api/ab-tests/event', methods=['POST'])
+@csrf.exempt  # anonymous visitors have no CSRF token; like the traffic endpoints
+@limiter.limit("240 per hour", methods=["POST"])
+def record_ab_test_event():
+    """Record that a visitor saw (exposure) or acted on (conversion) a variant.
+    The variant is recomputed here from the visitor's cookie; whatever the
+    browser claims is ignored, so results cannot be skewed by a crafted request."""
+    data = request_payload()
+    test_key = str(data.get("test_key") or "").strip()
+    event_type = str(data.get("event") or "").strip()
+    if event_type not in AB_EVENT_TYPES:
+        return jsonify({"success": False, "message": "Unknown event."}), 400
+
+    visitor_id = str(request.cookies.get("ux_vid") or "").strip()
+    if not re.match(r"^[A-Za-z0-9._-]{8,80}$", visitor_id):
+        return jsonify({"success": False, "message": "No visitor session."}), 400
+
+    test = ABTestConfig.query.filter_by(test_key=test_key, enabled=True).first()
+    if not test:
+        return jsonify({"success": True, "recorded": False})
+
+    variant = _resolve_ab_variant(visitor_id, test.test_key, test.allocation_b)
+    if event_type == "conversion":
+        # A conversion only counts for a visitor who was shown the experiment.
+        seen = ABTestEvent.query.filter_by(
+            test_key=test.test_key, visitor_id=visitor_id, event_type="exposure"
+        ).first()
+        if not seen:
+            return jsonify({"success": True, "recorded": False})
+        variant = seen.variant
+
+    db.session.add(ABTestEvent(
+        test_key=test.test_key, variant=variant, visitor_id=visitor_id, event_type=event_type,
+    ))
+    try:
+        db.session.commit()
+    except IntegrityError:  # already recorded for this visitor
+        db.session.rollback()
+        return jsonify({"success": True, "recorded": False})
+    return jsonify({"success": True, "recorded": True})
+
+
+def _ab_test_stats():
+    """{test_key: {"A": {"exposures": n, "conversions": n}, "B": {...}}}"""
+    rows = db.session.query(
+        ABTestEvent.test_key, ABTestEvent.variant, ABTestEvent.event_type, db.func.count(ABTestEvent.id)
+    ).group_by(ABTestEvent.test_key, ABTestEvent.variant, ABTestEvent.event_type).all()
+    stats = {}
+    for key, variant, event_type, count in rows:
+        bucket = stats.setdefault(key, {
+            "A": {"exposures": 0, "conversions": 0},
+            "B": {"exposures": 0, "conversions": 0},
+        })
+        if variant in bucket:
+            bucket[variant]["exposures" if event_type == "exposure" else "conversions"] = int(count)
+    return stats
+
+
 def _ab_test_dict(test):
     return {
         "id": test.id,
@@ -3643,7 +3721,29 @@ def api_admin_ab_tests():
     return jsonify({
         "can_edit": has_admin_capability("admin_control"),
         "tests": [_ab_test_dict(t) for t in tests],
+        "stats": _ab_test_stats(),
     })
+
+
+@app.route("/api/admin/ab-tests/<int:test_id>/results", methods=["DELETE"])
+@api_admin_required
+@limiter.limit("30 per hour", methods=["DELETE"])
+def api_admin_ab_test_reset(test_id):
+    """Clear collected results, e.g. after the variants were rewritten."""
+    if not has_admin_capability("admin_control"):
+        return jsonify({"success": False, "message": "Insufficient permission for this action."}), 403
+    test = db.session.get(ABTestConfig, test_id)
+    if not test:
+        return jsonify({"success": False, "message": "A/B test not found."}), 404
+    removed = ABTestEvent.query.filter_by(test_key=test.test_key).delete(synchronize_session=False)
+    db.session.commit()
+    log_superadmin_action(
+        action='AB_TEST_RESULTS_RESET',
+        target=test.test_key,
+        details=f'events_removed={removed}',
+        actor=current_user(),
+    )
+    return jsonify({"success": True, "removed": removed})
 
 
 @app.route("/api/admin/ab-tests/<int:test_id>", methods=["PUT"])

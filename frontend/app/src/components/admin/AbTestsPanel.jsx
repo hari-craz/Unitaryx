@@ -1,9 +1,63 @@
 import { useEffect, useState } from 'react';
-import { getJSON, putJSON } from '../../lib/api';
+import { getJSON, putJSON, deleteReq } from '../../lib/api';
 import { useSaveStatus } from './useSaveStatus';
 import SaveBadge from './SaveBadge';
 
-function AbTestCard({ test, canEdit, onSaved }) {
+const MIN_EXPOSURES = 100;
+
+function rate(v) {
+  return v.exposures ? (v.conversions / v.exposures) * 100 : 0;
+}
+
+function Results({ stats, canEdit, onReset }) {
+  const a = stats?.A || { exposures: 0, conversions: 0 };
+  const b = stats?.B || { exposures: 0, conversions: 0 };
+  if (!a.exposures && !b.exposures) {
+    return <p className="admin-muted">No results yet. Visitors are counted the first time they see the element.</p>;
+  }
+  const enough = a.exposures >= MIN_EXPOSURES && b.exposures >= MIN_EXPOSURES;
+  const rows = [
+    ['A', a],
+    ['B', b],
+  ];
+  return (
+    <div className="ab-results">
+      <table className="admin-table">
+        <thead>
+          <tr>
+            <th>Variant</th>
+            <th>Visitors</th>
+            <th>Clicks</th>
+            <th>Click rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, v]) => (
+            <tr key={label}>
+              <td>{label}</td>
+              <td>{v.exposures}</td>
+              <td>{v.conversions}</td>
+              <td>{rate(v).toFixed(1)}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="admin-muted">
+        {enough
+          ? 'Both variants have enough visitors for a first read; keep the test running before acting on small differences.'
+          : `Wait for at least ${MIN_EXPOSURES} visitors per variant before drawing conclusions.`}{' '}
+        Changing the split or the wording mid-test mixes old and new results.
+      </p>
+      {canEdit && (
+        <button type="button" className="studio-btn studio-btn--ghost" onClick={onReset}>
+          Reset results
+        </button>
+      )}
+    </div>
+  );
+}
+
+function AbTestCard({ test, stats, canEdit, onSaved, onReset }) {
   const [form, setForm] = useState(test);
   const { status, error, run } = useSaveStatus();
 
@@ -96,6 +150,8 @@ function AbTestCard({ test, canEdit, onSaved }) {
         </div>
       </div>
 
+      <Results stats={stats} canEdit={canEdit} onReset={() => onReset(test)} />
+
       {canEdit && (
         <div className="ab-actions">
           <button
@@ -122,6 +178,7 @@ function AbTestCard({ test, canEdit, onSaved }) {
 
 export default function AbTestsPanel() {
   const [tests, setTests] = useState([]);
+  const [stats, setStats] = useState({});
   const [canEdit, setCanEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -130,6 +187,7 @@ export default function AbTestsPanel() {
     getJSON('/api/admin/ab-tests')
       .then((data) => {
         setTests(data.tests);
+        setStats(data.stats || {});
         setCanEdit(data.can_edit);
       })
       .catch((err) => setError(err.message || 'Could not load A/B tests'))
@@ -138,6 +196,20 @@ export default function AbTestsPanel() {
 
   const handleSaved = (updated) =>
     setTests((list) => list.map((t) => (t.id === updated.id ? updated : t)));
+
+  const handleReset = async (test) => {
+    if (!window.confirm(`Clear all collected results for "${test.label}"? This cannot be undone.`)) return;
+    try {
+      await deleteReq(`/api/admin/ab-tests/${test.id}/results`);
+      setStats((s) => {
+        const next = { ...s };
+        delete next[test.test_key];
+        return next;
+      });
+    } catch (err) {
+      window.alert(err.message || 'Could not reset results.');
+    }
+  };
 
   if (loading) return <p className="admin-muted">Loading A/B tests…</p>;
   if (error) return <p className="admin-error">{error}</p>;
@@ -160,7 +232,16 @@ export default function AbTestsPanel() {
           <p className="admin-muted">A/B test configs appear here once created.</p>
         </div>
       ) : (
-        tests.map((t) => <AbTestCard key={t.id} test={t} canEdit={canEdit} onSaved={handleSaved} />)
+        tests.map((t) => (
+          <AbTestCard
+            key={t.id}
+            test={t}
+            stats={stats[t.test_key]}
+            canEdit={canEdit}
+            onSaved={handleSaved}
+            onReset={handleReset}
+          />
+        ))
       )}
     </section>
   );
