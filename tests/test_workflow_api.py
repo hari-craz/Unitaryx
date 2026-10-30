@@ -118,6 +118,62 @@ def test_task_assignment_never_fails_on_email_error(superadmin_client):
     assert resp.get_json()["email_sent"] is False
 
 
+OPS = "admin@unitaryx.com"
+SUPER = "harikavi1301@gmail.com"
+
+
+def _assign(client, **body):
+    return client.post("/api/admin/tasks", json=body, headers=client.csrf_headers)
+
+
+def test_task_can_be_assigned_to_several_admins_at_once(superadmin_client):
+    resp = _assign(superadmin_client, title="Prepare the demo", assigned_to_emails=[OPS, SUPER])
+    assert resp.status_code == 201
+    body = resp.get_json()
+    assert {t["assigned_to_email"] for t in body["tasks"]} == {OPS, SUPER}
+    assert body["task"]["assigned_to_email"] == OPS  # first one, for older clients
+
+    listed = superadmin_client.get("/api/admin/tasks").get_json()["tasks"]
+    assert sorted(t["assigned_to_email"] for t in listed) == sorted([OPS, SUPER])
+
+    # Each assignee tracks their own status.
+    ops_task = next(t for t in listed if t["assigned_to_email"] == OPS)
+    resp = superadmin_client.put(
+        f"/api/admin/tasks/{ops_task['id']}/status", json={"status": "Done"}, headers=superadmin_client.csrf_headers
+    )
+    assert resp.status_code == 200
+    statuses = {t["assigned_to_email"]: t["status"] for t in superadmin_client.get("/api/admin/tasks").get_json()["tasks"]}
+    assert statuses == {OPS: "Done", SUPER: "Pending"}
+
+
+def test_multi_assign_dedupes_and_normalises_emails(superadmin_client):
+    resp = _assign(superadmin_client, title="Dedupe me", assigned_to_emails=[OPS, OPS.upper(), f" {OPS} "])
+    assert resp.status_code == 201
+    assert len(resp.get_json()["tasks"]) == 1
+
+
+def test_multi_assign_is_all_or_nothing(superadmin_client):
+    resp = _assign(superadmin_client, title="Partly bad", assigned_to_emails=[OPS, "nobody@nowhere.com"])
+    assert resp.status_code == 400
+    assert "nobody@nowhere.com" in resp.get_json()["message"]
+    assert superadmin_client.get("/api/admin/tasks").get_json()["tasks"] == []
+
+
+def test_multi_assign_rejects_empty_and_oversized_lists(superadmin_client):
+    assert _assign(superadmin_client, title="Nobody", assigned_to_emails=[]).status_code == 400
+    assert _assign(superadmin_client, title="Nobody", assigned_to_emails=["", "  "]).status_code == 400
+    too_many = [f"admin{i}@unitaryx.com" for i in range(26)]
+    assert _assign(superadmin_client, title="Too many", assigned_to_emails=too_many).status_code == 400
+    assert _assign(superadmin_client, title="Wrong type", assigned_to_emails={"a": 1}).status_code == 400
+
+
+def test_multi_assign_reports_which_notifications_failed(superadmin_client):
+    resp = _assign(superadmin_client, title="Report me", assigned_to_emails=[OPS, SUPER])
+    body = resp.get_json()
+    assert body["email_sent"] is False  # SMTP is unconfigured in tests
+    assert sorted(body["emails_failed"]) == sorted([OPS, SUPER])
+
+
 def test_non_superadmin_only_sees_own_tasks(superadmin_client):
     """Uses a single client and switches the session, since both admin fixtures
     share one client and would otherwise clobber each other's session."""
