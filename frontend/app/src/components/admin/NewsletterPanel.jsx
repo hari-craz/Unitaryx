@@ -1,33 +1,40 @@
-import { useEffect, useState } from 'react';
-import { getJSON } from '../../lib/api';
+import { useState } from 'react';
+import NewsletterSubscribers from './NewsletterSubscribers';
+import NewsletterCampaigns from './NewsletterCampaigns';
+
+const VIEWS = [
+  { key: 'subscribers', label: 'Subscribers' },
+  { key: 'campaigns', label: 'Write & send' },
+];
 
 export default function NewsletterPanel() {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    getJSON('/api/admin/newsletter/summary')
-      .then(setData)
-      .catch((err) => setError(err.message || 'Could not load subscribers'));
-  }, []);
-
-  if (error) return <p className="admin-error">{error}</p>;
-  if (!data) return <p className="admin-muted">Loading subscribers…</p>;
+  const [view, setView] = useState('subscribers');
 
   return (
-    <section className="admin-card glass">
-      <h2>Newsletter</h2>
-      <p>
-        <strong>{data.confirmed}</strong> confirmed subscriber{data.confirmed === 1 ? '' : 's'}
-        {' · '}
-        <strong>{data.pending}</strong> awaiting confirmation
-      </p>
-      <p className="admin-muted">
-        Only confirmed addresses are exported. Subscribers who unsubscribe are removed immediately.
-      </p>
-      <a className="studio-btn studio-btn--primary" href="/api/admin/newsletter/export.csv" download>
-        Download confirmed subscribers (CSV)
-      </a>
+    <section className="admin-section">
+      <div className="admin-section-head">
+        <div>
+          <h2>Newsletter</h2>
+          <p className="admin-section-note">Manage who is subscribed and send updates to confirmed subscribers.</p>
+        </div>
+      </div>
+
+      <div className="studio-tabs" role="tablist" aria-label="Newsletter sections">
+        {VIEWS.map((v) => (
+          <button
+            key={v.key}
+            type="button"
+            role="tab"
+            aria-selected={view === v.key}
+            className={`studio-tab ${view === v.key ? 'active' : ''}`}
+            onClick={() => setView(v.key)}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
+
+      {view === 'subscribers' ? <NewsletterSubscribers /> : <NewsletterCampaigns />}
     </section>
   );
 }

@@ -9,7 +9,10 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+import re
+
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup, escape
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates" / "emails"
 
@@ -30,6 +33,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "newsletter_confirm_intro": "Please confirm that you would like to receive occasional updates from Unitary X.",
         "newsletter_confirm_body": "If you did not request this, ignore this email and you will not be subscribed.",
         "newsletter_confirm_cta": "Confirm subscription",
+        "newsletter_footer": "You are receiving this because you subscribed to updates from Unitary X.",
+        "newsletter_unsubscribe": "Unsubscribe",
     },
     "hi": {
         "welcome_subject": "Unitary X में आपका स्वागत है",
@@ -47,6 +52,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "newsletter_confirm_intro": "कृपया पुष्टि करें कि आप Unitary X से समय-समय पर अपडेट प्राप्त करना चाहते हैं।",
         "newsletter_confirm_body": "यदि आपने यह अनुरोध नहीं किया है, तो इस ईमेल को अनदेखा करें; आपको सदस्यता नहीं दी जाएगी।",
         "newsletter_confirm_cta": "सदस्यता की पुष्टि करें",
+        "newsletter_footer": "आपको यह ईमेल इसलिए मिला है क्योंकि आपने Unitary X के अपडेट के लिए सदस्यता ली थी।",
+        "newsletter_unsubscribe": "सदस्यता रद्द करें",
     },
 }
 
@@ -110,7 +117,13 @@ def build_assigned_payload(
 
 
 def _deliver(
-    subject: str, sender: str, recipient: str, plain: str, html: str | None = None, sync: bool = False
+    subject: str,
+    sender: str,
+    recipient: str,
+    plain: str,
+    html: str | None = None,
+    sync: bool = False,
+    headers: Dict[str, str] | None = None,
 ) -> None:
     from .email_tasks import send_email
 
@@ -124,11 +137,11 @@ def _deliver(
     enqueue = None if sync else getattr(send_email, "delay", None)
     if callable(enqueue):
         try:
-            enqueue(subject, sender, recipient, plain, html)
+            enqueue(subject, sender, recipient, plain, html, headers)
             return
         except Exception:
             pass
-    send_email(subject, sender, recipient, plain, html)
+    send_email(subject, sender, recipient, plain, html, headers)
 
 
 def send_welcome_email(recipient: str, name: str, sender: str, locale: str | None = None, app_url: str | None = None) -> None:
@@ -175,3 +188,71 @@ def send_newsletter_confirm_email(recipient: str, confirm_url: str, sender: str,
     # Synchronous on purpose: the subscribe endpoint releases its resend cooldown
     # if delivery fails, which only works if the failure reaches the request.
     _deliver(subject, sender, recipient, plain, html, sync=True)
+
+
+_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+
+
+def _linkify(text: str) -> Markup:
+    """HTML-escape `text`, then turn http(s) URLs into links. Escaping happens
+    first, so nothing the author types can inject markup."""
+    safe = str(escape(text))
+
+    def link(match: "re.Match[str]") -> str:
+        url = match.group(0)
+        trailing = ""
+        while url and url[-1] in ".,;:!?)":
+            trailing = url[-1] + trailing
+            url = url[:-1]
+        return f'<a href="{url}" style="color:#2F5CFF;">{url}</a>{trailing}'
+
+    return Markup(_URL_RE.sub(link, safe))
+
+
+def split_paragraphs(body: str) -> list[str]:
+    """Blank lines separate paragraphs; single line breaks are kept inside one."""
+    parts = re.split(r"\n\s*\n", (body or "").replace("\r\n", "\n").strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def build_newsletter_payload(
+    subject: str,
+    body: str,
+    unsubscribe_url: str,
+    cta_label: str | None = None,
+    cta_url: str | None = None,
+    locale: str | None = None,
+) -> Tuple[str, str, str]:
+    text = _copy(locale)
+    paragraphs = split_paragraphs(body)
+    context = {
+        "subject": subject,
+        "paragraphs_html": [_linkify(p) for p in paragraphs],
+        "paragraphs": paragraphs,
+        "cta_label": cta_label or "",
+        "cta_url": cta_url or "",
+        "footer": text["newsletter_footer"],
+        "unsubscribe_label": text["newsletter_unsubscribe"],
+        "unsubscribe_url": unsubscribe_url,
+    }
+    plain = _render_template("newsletter.txt", context)
+    html = _render_template("newsletter.html", context)
+    return subject, plain, html
+
+
+def send_newsletter_message(
+    recipient: str,
+    subject: str,
+    plain: str,
+    html: str,
+    sender: str,
+    unsubscribe_url: str,
+) -> None:
+    """Send one newsletter. Synchronous so the caller can record a failure for
+    this recipient. List-Unsubscribe lets mail apps show their own unsubscribe
+    button; the POST form is the one-click variant (RFC 8058)."""
+    headers = {
+        "List-Unsubscribe": f"<{unsubscribe_url}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+    _deliver(subject, sender, recipient, plain, html, sync=True, headers=headers)
