@@ -713,6 +713,34 @@ class Testimonial(db.Model):
     active   = db.Column(db.Boolean, default=True)
 
 
+class Collaborator(db.Model):
+    """Startups and freelancers Unitary X works with, shown on /collaborators."""
+    __tablename__ = 'collaborators'
+
+    id            = db.Column(db.Integer, primary_key=True)
+    name          = db.Column(db.String(120), nullable=False)
+    kind          = db.Column(db.String(12), nullable=False, default='startup')  # startup | freelancer
+    founder_name  = db.Column(db.String(120))
+    goals         = db.Column(db.String(300))
+    logo_url      = db.Column(db.String(300))
+    website_url   = db.Column(db.String(300), nullable=False)
+    display_order = db.Column(db.Integer, default=0)
+    active        = db.Column(db.Boolean, default=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "kind": self.kind,
+            "founder_name": self.founder_name or "",
+            "goals": self.goals or "",
+            "logo_url": self.logo_url or "",
+            "website_url": self.website_url,
+            "display_order": self.display_order or 0,
+            "active": bool(self.active),
+        }
+
+
 class Founder(db.Model):
     """Team members shown in the founders/team carousel (table name kept as
     'founders' for continuity, but holds the whole ~10-person team)."""
@@ -746,6 +774,7 @@ DB_BACKUP_MODELS = {
     "projects": Project,
     "testimonials": Testimonial,
     "founders": Founder,
+    "collaborators": Collaborator,
     "subscribers": Subscriber,
     "project_requests": ProjectRequest,
     "admin_tasks": AdminTask,
@@ -1805,7 +1834,7 @@ DIST_DIR = os.path.join(PROJECT_ROOT, "frontend", "app", "dist")
 # indexing (this is what produced the Search Console duplicate-canonical and
 # crawled-not-indexed flags: /about, /services, /projects, /contact, /home,
 # /index.html etc. were all serving 200 copies of the homepage).
-KNOWN_SPA_ROUTES = {"", "dashboard", "admin/studio"}
+KNOWN_SPA_ROUTES = {"", "dashboard", "admin/studio", "collaborators"}
 
 
 @app.before_request
@@ -1921,6 +1950,11 @@ STATIC_PAGES = {
         "What personal data Unitary X collects through its website, why, who it is shared with, "
         "and how to ask for access or deletion.",
     ),
+    "/collaborators": (
+        "Collaborators | Unitary X",
+        "The startups and freelancers Unitary X collaborates with: who they are, what they are "
+        "building, and where to find them.",
+    ),
     "/terms": (
         "Terms | Unitary X",
         "Terms for Unitary X hosting and project work: what the hosting plans cover, add-ons, "
@@ -1965,6 +1999,11 @@ def privacy_page():
     return _static_page_response("/privacy")
 
 
+@app.route("/collaborators")
+def collaborators_page():
+    return _static_page_response("/collaborators")
+
+
 @app.route("/terms")
 def terms_page():
     return _static_page_response("/terms")
@@ -1975,7 +2014,7 @@ def sitemap_xml():
     import html as _html
 
     projects = Project.query.order_by(Project.display_order.asc(), Project.id.asc()).all()
-    urls = [(f"{SITE_URL}/", "weekly", "1.0"), (f"{SITE_URL}/privacy", "yearly", "0.3"), (f"{SITE_URL}/terms", "yearly", "0.3")] + [
+    urls = [(f"{SITE_URL}/", "weekly", "1.0"), (f"{SITE_URL}/collaborators", "monthly", "0.5"), (f"{SITE_URL}/privacy", "yearly", "0.3"), (f"{SITE_URL}/terms", "yearly", "0.3")] + [
         (f"{SITE_URL}/projects/{p.slug}", "monthly", "0.7" if p.has_case_study else "0.4")
         for p in projects
     ]
@@ -2887,6 +2926,34 @@ def _clean_int(value, default=0, minimum=-1_000_000, maximum=1_000_000):
     return max(minimum, min(maximum, number))
 
 
+def _clean_bool(value, default=True):
+    """Parse a JSON/form boolean. bool("false") is True in Python, so strings
+    must be read explicitly rather than by truthiness."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    text_value = str(value).strip().lower()
+    if text_value in {"true", "1", "yes", "on"}:
+        return True
+    if text_value in {"false", "0", "no", "off"}:
+        return False
+    raise ValueError("Expected true or false.")
+
+
+def _clean_website_url(value):
+    text_value = str(value or "").strip()
+    if not text_value:
+        raise ValueError("A website link is required.")
+    if len(text_value) > 300:
+        raise ValueError("Website link is too long.")
+    if not re.match(r"^https?://[^\s/$.?#][^\s]*$", text_value, re.I):
+        raise ValueError("Website link must start with http:// or https://.")
+    return text_value
+
+
 def _clean_rating(value, default=5.0):
     if value is None or value == "":
         return default
@@ -2938,7 +3005,9 @@ def _remove_local_upload(url):
     if not target.startswith(os.path.realpath(UPLOAD_ROOT) + os.sep):
         return
     still_used = (
-        Founder.query.filter_by(photo_url=url).first() or Project.query.filter_by(photo_url=url).first()
+        Founder.query.filter_by(photo_url=url).first()
+        or Project.query.filter_by(photo_url=url).first()
+        or Collaborator.query.filter_by(logo_url=url).first()
     )
     if still_used:
         return
@@ -3068,6 +3137,124 @@ def api_admin_founders_reorder():
 
     for index, founder_id in enumerate(order_ids):
         founders[founder_id].display_order = index
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+# ─── API — Collaborators ───────────────────────────────────────────────────────
+
+COLLABORATOR_KINDS = ("startup", "freelancer")
+
+
+def _collaborator_fields(data, partial=False):
+    """Validate collaborator input. Returns cleaned fields; raises ValueError
+    (rendered as 400 by the admin error handler) on bad input."""
+    out = {}
+    if not partial or "name" in data:
+        name = str(data.get("name", "")).strip()
+        if not name or len(name) > 120:
+            raise ValueError("Name is required (120 characters max).")
+        out["name"] = name
+    if not partial or "kind" in data:
+        kind = str(data.get("kind", "startup")).strip().lower()
+        if kind not in COLLABORATOR_KINDS:
+            raise ValueError("Type must be startup or freelancer.")
+        out["kind"] = kind
+    if not partial or "founder_name" in data:
+        founder_name = str(data.get("founder_name", "")).strip()
+        if len(founder_name) > 120:
+            raise ValueError("Founder name is too long (120 characters max).")
+        out["founder_name"] = founder_name or None
+    if not partial or "goals" in data:
+        goals = re.sub(r"\s+", " ", str(data.get("goals", ""))).strip()
+        if len(goals) > 300:
+            raise ValueError("Goals must be 300 characters or fewer.")
+        out["goals"] = goals or None
+    if not partial or "logo_url" in data:
+        out["logo_url"] = _clean_photo_url(data.get("logo_url"))
+    if not partial or "website_url" in data:
+        out["website_url"] = _clean_website_url(data.get("website_url"))
+    if "display_order" in data:
+        out["display_order"] = _clean_int(data.get("display_order"))
+    if "active" in data:
+        out["active"] = _clean_bool(data.get("active"))
+    return out
+
+
+@app.route("/api/collaborators")
+def api_collaborators():
+    rows = Collaborator.query.filter_by(active=True) \
+        .order_by(Collaborator.display_order.asc(), Collaborator.id.asc()).all()
+    return jsonify([c.to_dict() for c in rows])
+
+
+@app.route("/api/admin/collaborators", methods=["GET"])
+@api_superadmin_required
+def api_admin_collaborators_list():
+    rows = Collaborator.query.order_by(Collaborator.display_order.asc(), Collaborator.id.asc()).all()
+    return jsonify([c.to_dict() for c in rows])
+
+
+@app.route("/api/admin/collaborators", methods=["POST"])
+@api_superadmin_required
+@limiter.limit("60 per hour", methods=["POST"])
+def api_admin_collaborators_create():
+    fields = _collaborator_fields(request_payload())
+    if "display_order" not in fields:
+        fields["display_order"] = (db.session.query(db.func.max(Collaborator.display_order)).scalar() or 0) + 1
+    fields.setdefault("active", True)
+    item = Collaborator(**fields)
+    db.session.add(item)
+    db.session.commit()
+    return jsonify({"success": True, "collaborator": item.to_dict()}), 201
+
+
+@app.route("/api/admin/collaborators/<int:item_id>", methods=["PUT"])
+@api_superadmin_required
+@limiter.limit("120 per hour", methods=["PUT"])
+def api_admin_collaborators_update(item_id):
+    item = db.session.get(Collaborator, item_id)
+    if not item:
+        return jsonify({"success": False, "message": "Collaborator not found."}), 404
+    old_logo = item.logo_url
+    for key, value in _collaborator_fields(request_payload(), partial=True).items():
+        setattr(item, key, value)
+    db.session.commit()
+    if old_logo and old_logo != item.logo_url:
+        _remove_local_upload(old_logo)
+    return jsonify({"success": True, "collaborator": item.to_dict()})
+
+
+@app.route("/api/admin/collaborators/<int:item_id>", methods=["DELETE"])
+@api_superadmin_required
+@limiter.limit("60 per hour", methods=["DELETE"])
+def api_admin_collaborators_delete(item_id):
+    item = db.session.get(Collaborator, item_id)
+    if not item:
+        return jsonify({"success": False, "message": "Collaborator not found."}), 404
+    old_logo = item.logo_url
+    db.session.delete(item)
+    db.session.commit()
+    _remove_local_upload(old_logo)
+    return jsonify({"success": True})
+
+
+@app.route("/api/admin/collaborators/reorder", methods=["POST"])
+@api_superadmin_required
+@limiter.limit("60 per hour", methods=["POST"])
+def api_admin_collaborators_reorder():
+    order = request_payload().get("order")
+    if not isinstance(order, list) or not order:
+        return jsonify({"success": False, "message": "order must be a non-empty list of ids."}), 400
+    try:
+        order_ids = [int(x) for x in order]
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "order must contain integer ids."}), 400
+    rows = {c.id: c for c in Collaborator.query.filter(Collaborator.id.in_(order_ids)).all()}
+    if len(rows) != len(set(order_ids)):
+        return jsonify({"success": False, "message": "One or more collaborator ids were not found."}), 400
+    for index, item_id in enumerate(order_ids):
+        rows[item_id].display_order = index
     db.session.commit()
     return jsonify({"success": True})
 
@@ -3229,7 +3416,7 @@ def api_admin_projects_reorder():
 ALLOWED_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_UPLOAD_PIXELS = 40_000_000  # reject decompression bombs before decoding
-UPLOAD_MAX_DIMENSIONS = {"founders": 1600, "projects": 1200}
+UPLOAD_MAX_DIMENSIONS = {"founders": 1600, "projects": 1200, "collaborators": 600}
 
 
 @app.route("/api/admin/upload", methods=["POST"])
@@ -3238,7 +3425,7 @@ UPLOAD_MAX_DIMENSIONS = {"founders": 1600, "projects": 1200}
 def api_admin_upload():
     kind = (request.form.get("kind") or "").strip().lower()
     if kind not in UPLOAD_MAX_DIMENSIONS:
-        return jsonify({"success": False, "message": "kind must be 'founders' or 'projects'."}), 400
+        return jsonify({"success": False, "message": "kind must be 'founders', 'projects' or 'collaborators'."}), 400
 
     upload = request.files.get("file")
     if not upload or not upload.filename:
@@ -5067,7 +5254,7 @@ def export_csv():
 
 def _ensure_upload_dirs():
     base_uploads = os.path.join(PROJECT_ROOT, "frontend", "static", "uploads")
-    for sub in ("founders", "projects", "testimonials"):
+    for sub in ("founders", "projects", "collaborators"):
         target = os.path.join(base_uploads, sub)
         try:
             os.makedirs(target, exist_ok=True)

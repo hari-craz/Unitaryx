@@ -8,6 +8,7 @@ import FoundersCarousel from '../components/sections/founders/FoundersCarousel';
 import ProjectsGrid from '../components/sections/projects/ProjectsGrid';
 import Hosting from '../components/sections/Hosting';
 import About from '../components/sections/About';
+import CollaboratorsStrip from '../components/sections/CollaboratorsStrip';
 import Process from '../components/sections/Process';
 import Faq from '../components/sections/Faq';
 import Feedback from '../components/sections/Feedback';
@@ -34,6 +35,7 @@ export default function MarketingPage() {
           <ProjectsGrid />
           <Hosting />
           <About />
+          <CollaboratorsStrip />
           <Process />
           <Faq />
           <Feedback />

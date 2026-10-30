@@ -192,6 +192,17 @@
   height: 54px;
 }
 
+.admin-row-thumb--square {
+  width: 48px;
+  height: 48px;
+  background: white;
+  border: 1px solid var(--line);
+}
+
+.admin-row-thumb--square img {
+  object-fit: contain;
+}
+
 .admin-row-thumb--landscape {
   width: 64px;
   height: 44px;
@@ -427,6 +438,16 @@
 .img-preview--portrait {
   aspect-ratio: 3 / 4;
   max-width: 180px;
+}
+
+.img-preview--square {
+  aspect-ratio: 1 / 1;
+  max-width: 160px;
+  background: white;
+}
+
+.img-preview--square img {
+  object-fit: contain;
 }
 
 .img-preview--landscape {
