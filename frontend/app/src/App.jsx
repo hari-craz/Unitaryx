@@ -5,6 +5,7 @@ import MarketingPage from './pages/MarketingPage';
 import Dashboard from './pages/Dashboard';
 import AdminStudio from './pages/AdminStudio';
 import ProjectPage from './pages/ProjectPage';
+import Collaborators from './pages/Collaborators';
 import NewsletterAction from './pages/NewsletterAction';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/admin/studio" element={<AdminStudio />} />
         <Route path="/projects/:slug" element={<ProjectPage />} />
+        <Route path="/collaborators" element={<Collaborators />} />
         <Route path="/newsletter/confirm/:token" element={<NewsletterAction mode="confirm" />} />
         <Route path="/newsletter/unsubscribe/:token" element={<NewsletterAction mode="unsubscribe" />} />
         <Route path="/privacy" element={<Privacy />} />

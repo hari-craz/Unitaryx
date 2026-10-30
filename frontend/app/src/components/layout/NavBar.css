@@ -152,7 +152,7 @@
   background: rgba(47, 92, 255, 0.08);
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1140px) {
   .nav-links,
   .nav-primary-cta,
   .nav-cta {

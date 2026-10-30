@@ -3,6 +3,7 @@ import { getJSON, postJSON } from '../lib/api';
 import { usePageMeta } from '../hooks/usePageMeta';
 import FoundersManager from '../components/admin/FoundersManager';
 import ProjectsManager from '../components/admin/ProjectsManager';
+import CollaboratorsManager from '../components/admin/CollaboratorsManager';
 import AnalyticsPanel from '../components/admin/AnalyticsPanel';
 import LiveUsersPanel from '../components/admin/LiveUsersPanel';
 import AbTestsPanel from '../components/admin/AbTestsPanel';
@@ -29,6 +30,7 @@ const TABS = [
   { key: 'leads', label: 'Leads', capability: 'lead_manage' },
   { key: 'founders', label: 'Team', superadmin: true },
   { key: 'projects', label: 'Projects', superadmin: true },
+  { key: 'collaborators', label: 'Collaborators', superadmin: true },
   { key: 'analytics', label: 'Analytics', capability: 'analytics_view' },
   { key: 'live', label: 'Live users', capability: 'analytics_view' },
   { key: 'abtests', label: 'A/B tests' },
@@ -56,6 +58,7 @@ const PANELS = {
   leads: LeadsPanel,
   founders: FoundersManager,
   projects: ProjectsManager,
+  collaborators: CollaboratorsManager,
   analytics: AnalyticsPanel,
   live: LiveUsersPanel,
   abtests: AbTestsPanel,
