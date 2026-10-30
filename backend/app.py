@@ -2864,6 +2864,23 @@ def _clean_int(value, default=0, minimum=-1_000_000, maximum=1_000_000):
     return max(minimum, min(maximum, number))
 
 
+def _clean_bool(value, default=True):
+    """Parse a JSON/form boolean. bool("false") is True in Python, so strings
+    must be read explicitly rather than by truthiness."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    text_value = str(value).strip().lower()
+    if text_value in {"true", "1", "yes", "on"}:
+        return True
+    if text_value in {"false", "0", "no", "off"}:
+        return False
+    raise ValueError("Expected true or false.")
+
+
 def _clean_rating(value, default=5.0):
     if value is None or value == "":
         return default
@@ -2960,7 +2977,7 @@ def _testimonial_fields(data, partial=False):
             raise ValueError("Rating must be between 1 and 5.")
         out["rating"] = rating
     if "active" in data:
-        out["active"] = bool(data.get("active"))
+        out["active"] = _clean_bool(data.get("active"))
     return out
 
 

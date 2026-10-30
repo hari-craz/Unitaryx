@@ -61,3 +61,21 @@ def test_admin_routes_are_superadmin_only(admin_client, client):
 
 def test_startup_does_not_reseed_deleted_testimonials(superadmin_client):
     assert superadmin_client.get("/api/testimonials").get_json() == []
+
+
+def test_active_flag_is_parsed_not_truthy(superadmin_client):
+    """bool("false") is True in Python; a string "false" must still hide the entry."""
+    created = _create(superadmin_client, active="false")
+    assert created.status_code == 201
+    assert created.get_json()["testimonial"]["active"] is False
+    assert superadmin_client.get("/api/testimonials").get_json() == []
+
+    item_id = created.get_json()["testimonial"]["id"]
+    headers = superadmin_client.csrf_headers
+    resp = superadmin_client.put(f"/api/admin/testimonials/{item_id}", json={"active": "true"}, headers=headers)
+    assert resp.get_json()["testimonial"]["active"] is True
+    resp = superadmin_client.put(f"/api/admin/testimonials/{item_id}", json={"active": "off"}, headers=headers)
+    assert resp.get_json()["testimonial"]["active"] is False
+    assert superadmin_client.put(
+        f"/api/admin/testimonials/{item_id}", json={"active": "maybe"}, headers=headers
+    ).status_code == 400
