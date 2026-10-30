@@ -26,6 +26,7 @@ from backend.app import (  # noqa: E402  (must import after env vars are set)
     Founder,
     Project,
     ProjectRequest,
+    Testimonial,
     User,
 )
 
@@ -35,6 +36,7 @@ def _clean_tables():
     with flask_app.app_context():
         Founder.query.delete()
         Project.query.delete()
+        Testimonial.query.delete()
         ProjectRequest.query.delete()
         AdminTask.query.delete()
         FinanceEntry.query.delete()

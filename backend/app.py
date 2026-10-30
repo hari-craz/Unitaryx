@@ -695,6 +695,16 @@ class Testimonial(db.Model):
     av_class = db.Column(db.String(20))
     active   = db.Column(db.Boolean, default=True)
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "role": self.role or "",
+            "review": self.review,
+            "rating": self.rating or 5,
+            "active": bool(self.active),
+        }
+
 
 class Founder(db.Model):
     """Team members shown in the founders/team carousel (table name kept as
@@ -1672,22 +1682,6 @@ def seed_data():
                     description="Automated digital newspaper aggregation and layout system that fetches, categorises, and presents real-time news content with a dynamic flux-based UI.",
                     category="software", tags="Software,Python,Automation,News", price="Rs.1,800",
                     duration="7 days", rating=4.9, icon="fas fa-newspaper", bg_class="bg-2", featured=True),
-        ])
-
-    if Testimonial.query.count() == 0:
-        db.session.add_all([
-            Testimonial(name="Rahul Kumar", role="B.Tech CSE, Anna University",
-                        review="Got my final year project (face recognition attendance system) done in just 10 days! The code was clean, well-commented, and I even got a PPT. Scored distinction!",
-                        rating=5, avatar="R", av_class="av-1"),
-            Testimonial(name="Priya Sharma", role="Diploma in ECE, PSG Polytechnic",
-                        review="My Arduino smart home project was built with actual working hardware and proper circuit diagrams. The instructor was super impressed!",
-                        rating=5, avatar="P", av_class="av-2"),
-            Testimonial(name="Arun Venkatesan", role="MCA Student, Bharathiar University",
-                        review="I was struggling with my DBMS mini-project. Got it done in 3 days with MySQL, Python, and a great UI. Total lifesaver for my exams!",
-                        rating=5, avatar="A", av_class="av-3"),
-            Testimonial(name="Sneha Rajan", role="12th Standard, KV School Chennai",
-                        review="School science expo winning project! The line-follower robot was amazing — real working model, poster, and everything!",
-                        rating=5, avatar="S", av_class="av-4"),
         ])
 
     if ABTestConfig.query.count() == 0:
@@ -2937,6 +2931,87 @@ def _handle_admin_value_error(exc):
         db.session.rollback()
         return jsonify({"success": False, "message": str(exc) or "Invalid value."}), 400
     raise exc
+
+
+# ─── API — Testimonials ────────────────────────────────────────────────────────
+
+def _testimonial_fields(data, partial=False):
+    """Validate testimonial input. Returns a dict of cleaned fields; raises
+    ValueError (rendered as 400 by the admin error handler) on bad input."""
+    out = {}
+    if not partial or "name" in data:
+        name = str(data.get("name", "")).strip()
+        if not name or len(name) > 100:
+            raise ValueError("Name is required (100 characters max).")
+        out["name"] = name
+    if not partial or "role" in data:
+        role = str(data.get("role", "")).strip()
+        if len(role) > 150:
+            raise ValueError("Role is too long (150 characters max).")
+        out["role"] = role or None
+    if not partial or "review" in data:
+        review = str(data.get("review", "")).strip()
+        if len(review) < 10 or len(review) > 800:
+            raise ValueError("Review must be between 10 and 800 characters.")
+        out["review"] = review
+    if not partial or "rating" in data:
+        rating = _clean_int(data.get("rating"), 5)
+        if not 1 <= rating <= 5:
+            raise ValueError("Rating must be between 1 and 5.")
+        out["rating"] = rating
+    if "active" in data:
+        out["active"] = bool(data.get("active"))
+    return out
+
+
+@app.route("/api/testimonials")
+def api_testimonials():
+    rows = Testimonial.query.filter_by(active=True).order_by(Testimonial.id.asc()).all()
+    return jsonify([t.to_dict() for t in rows])
+
+
+@app.route("/api/admin/testimonials", methods=["GET"])
+@api_superadmin_required
+def api_admin_testimonials_list():
+    rows = Testimonial.query.order_by(Testimonial.id.asc()).all()
+    return jsonify([t.to_dict() for t in rows])
+
+
+@app.route("/api/admin/testimonials", methods=["POST"])
+@api_superadmin_required
+@limiter.limit("60 per hour", methods=["POST"])
+def api_admin_testimonials_create():
+    fields = _testimonial_fields(request_payload())
+    fields.setdefault("active", True)
+    item = Testimonial(**fields)
+    db.session.add(item)
+    db.session.commit()
+    return jsonify({"success": True, "testimonial": item.to_dict()}), 201
+
+
+@app.route("/api/admin/testimonials/<int:item_id>", methods=["PUT"])
+@api_superadmin_required
+@limiter.limit("120 per hour", methods=["PUT"])
+def api_admin_testimonials_update(item_id):
+    item = db.session.get(Testimonial, item_id)
+    if not item:
+        return jsonify({"success": False, "message": "Testimonial not found."}), 404
+    for key, value in _testimonial_fields(request_payload(), partial=True).items():
+        setattr(item, key, value)
+    db.session.commit()
+    return jsonify({"success": True, "testimonial": item.to_dict()})
+
+
+@app.route("/api/admin/testimonials/<int:item_id>", methods=["DELETE"])
+@api_superadmin_required
+@limiter.limit("60 per hour", methods=["DELETE"])
+def api_admin_testimonials_delete(item_id):
+    item = db.session.get(Testimonial, item_id)
+    if not item:
+        return jsonify({"success": False, "message": "Testimonial not found."}), 404
+    db.session.delete(item)
+    db.session.commit()
+    return jsonify({"success": True})
 
 
 # ─── API — Founders / Team ─────────────────────────────────────────────────────

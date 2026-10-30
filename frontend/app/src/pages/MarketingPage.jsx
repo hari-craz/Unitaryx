@@ -10,6 +10,7 @@ import Hosting from '../components/sections/Hosting';
 import About from '../components/sections/About';
 import Process from '../components/sections/Process';
 import Faq from '../components/sections/Faq';
+import Testimonials from '../components/sections/Testimonials';
 import Feedback from '../components/sections/Feedback';
 import Contact from '../components/sections/Contact';
 
@@ -36,6 +37,7 @@ export default function MarketingPage() {
           <About />
           <Process />
           <Faq />
+          <Testimonials />
           <Feedback />
           <Contact />
         </div>
