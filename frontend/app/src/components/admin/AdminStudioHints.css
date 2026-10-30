@@ -20,3 +20,50 @@
   color: var(--ink-faint);
   padding: 0 0.4rem;
 }
+
+.task-assignees {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.task-assignees legend {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  width: 100%;
+  padding: 0;
+  margin-bottom: 0.4rem;
+}
+
+.task-assignees-count {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  text-transform: none;
+}
+
+.task-assignees-actions {
+  margin-bottom: 0.4rem;
+}
+
+.task-assignees-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 11rem;
+  overflow-y: auto;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.task-assignees-list .studio-toggle {
+  text-transform: none;
+  letter-spacing: normal;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}

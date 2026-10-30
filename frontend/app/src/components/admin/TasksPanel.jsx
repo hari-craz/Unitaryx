@@ -14,7 +14,7 @@ function statusTone(status) {
 export default function TasksPanel() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
-  const [form, setForm] = useState({ title: '', details: '', assigned_to_email: '' });
+  const [form, setForm] = useState({ title: '', details: '', assigned_to_emails: [] });
   const [formError, setFormError] = useState('');
   const { status: saveState, error: saveError, run } = useSaveStatus();
 
@@ -37,21 +37,35 @@ export default function TasksPanel() {
       setFormError('Task title must be at least 3 characters.');
       return;
     }
-    if (!form.assigned_to_email) {
-      setFormError('Choose an admin to assign to.');
+    if (form.assigned_to_emails.length === 0) {
+      setFormError('Choose at least one admin to assign to.');
       return;
     }
     try {
       const res = await run(() => postJSON('/api/admin/tasks', form));
-      setData((d) => ({ ...d, tasks: [res.task, ...d.tasks] }));
-      setForm({ title: '', details: '', assigned_to_email: '' });
+      setData((d) => ({ ...d, tasks: [...res.tasks, ...d.tasks] }));
+      setForm({ title: '', details: '', assigned_to_emails: [] });
       if (res.email_sent === false) {
-        setFormError('Task created, but the notification email could not be sent.');
+        const n = res.emails_failed?.length || 0;
+        setFormError(
+          `Assigned, but ${n === 1 ? 'one notification email' : `${n} notification emails`} could not be sent.`
+        );
       }
     } catch (err) {
       setFormError(err.message || 'Could not assign task.');
     }
   };
+
+  const toggleAssignee = (email) =>
+    setForm((f) => ({
+      ...f,
+      assigned_to_emails: f.assigned_to_emails.includes(email)
+        ? f.assigned_to_emails.filter((e) => e !== email)
+        : [...f.assigned_to_emails, email],
+    }));
+
+  const allSelected =
+    data.assignable_admins.length > 0 && form.assigned_to_emails.length === data.assignable_admins.length;
 
   const changeStatus = async (task, status) => {
     const res = await putJSON(`/api/admin/tasks/${task.id}/status`, { status });
@@ -87,20 +101,40 @@ export default function TasksPanel() {
                 onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
               />
             </label>
-            <label className="studio-field">
-              Assign to
-              <select
-                value={form.assigned_to_email}
-                onChange={(e) => setForm((f) => ({ ...f, assigned_to_email: e.target.value }))}
-              >
-                <option value="">Select admin…</option>
+            <fieldset className="studio-field task-assignees">
+              <legend>
+                Assign to
+                <span className="task-assignees-count">
+                  {form.assigned_to_emails.length} selected
+                </span>
+              </legend>
+              <div className="task-assignees-actions">
+                <button
+                  type="button"
+                  className="studio-btn studio-btn--ghost"
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      assigned_to_emails: allSelected ? [] : [...data.assignable_admins],
+                    }))
+                  }
+                >
+                  {allSelected ? 'Clear all' : 'Select all'}
+                </button>
+              </div>
+              <div className="task-assignees-list">
                 {data.assignable_admins.map((email) => (
-                  <option key={email} value={email}>
+                  <label key={email} className="studio-toggle">
+                    <input
+                      type="checkbox"
+                      checked={form.assigned_to_emails.includes(email)}
+                      onChange={() => toggleAssignee(email)}
+                    />
                     {email}
-                  </option>
+                  </label>
                 ))}
-              </select>
-            </label>
+              </div>
+            </fieldset>
           </div>
           <label className="studio-field">
             Details
@@ -114,7 +148,7 @@ export default function TasksPanel() {
             {formError && <span className="studio-field-error">{formError}</span>}
             <SaveBadge status={saveState} error={saveError} savedLabel="Assigned" />
             <button type="submit" className="studio-btn studio-btn--primary" disabled={saveState === 'saving'}>
-              Assign task
+              {form.assigned_to_emails.length > 1 ? `Assign to ${form.assigned_to_emails.length} admins` : 'Assign task'}
             </button>
           </div>
         </form>

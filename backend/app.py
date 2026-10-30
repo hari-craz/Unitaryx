@@ -3747,49 +3747,83 @@ def api_admin_tasks_create():
     data = request_payload()
     title = str(data.get("title", "")).strip()
     details = str(data.get("details", "")).strip()
-    assigned_to_email = normalize_email(data.get("assigned_to_email", ""))
+
+    # `assigned_to_emails` (list) is the multi-assign form; the single
+    # `assigned_to_email` string is still accepted.
+    raw = data.get("assigned_to_emails")
+    if raw is None:
+        raw = [data.get("assigned_to_email", "")]
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return jsonify({"success": False, "message": "Please choose at least one admin."}), 400
+    emails = []
+    for item in raw:
+        email = normalize_email(item)
+        if email and email not in emails:
+            emails.append(email)
 
     if len(title) < 3 or len(title) > 160:
         return jsonify({"success": False, "message": "Task title must be between 3 and 160 characters."}), 400
-    if not validate_email(assigned_to_email):
-        return jsonify({"success": False, "message": "Please choose a valid admin email."}), 400
+    if not emails:
+        return jsonify({"success": False, "message": "Please choose at least one admin."}), 400
+    if len(emails) > 25:
+        return jsonify({"success": False, "message": "You can assign a task to at most 25 admins at once."}), 400
+    if not all(validate_email(e) for e in emails):
+        return jsonify({"success": False, "message": "Please choose valid admin emails."}), 400
 
-    assignee = User.query.filter(
-        db.func.lower(User.email) == assigned_to_email,
-        User.role == "admin",
-        User.is_active.is_(True),
-    ).first()
-    if not assignee:
-        return jsonify({"success": False, "message": "Selected email is not an active admin account."}), 400
+    active_admins = {
+        normalize_email(u.email)
+        for u in User.query.filter(
+            db.func.lower(User.email).in_(emails), User.role == "admin", User.is_active.is_(True)
+        ).all()
+    }
+    missing = [e for e in emails if e not in active_admins]
+    if missing:
+        return jsonify({
+            "success": False,
+            "message": f"Not an active admin account: {', '.join(missing)}.",
+        }), 400
 
-    task = AdminTask(
-        title=title,
-        details=details,
-        assigned_to_email=assigned_to_email,
-        assigned_by_email=normalize_email(getattr(creator, "email", "")),
-        status="Pending",
-    )
-    db.session.add(task)
-    log_superadmin_action(
-        action="TASK_ASSIGNED",
-        target=assigned_to_email,
-        details=f"title={title}",
-        actor=creator,
-    )
+    # One task row per assignee so each person tracks their own status.
+    creator_email = normalize_email(getattr(creator, "email", ""))
+    tasks = [
+        AdminTask(
+            title=title,
+            details=details,
+            assigned_to_email=email,
+            assigned_by_email=creator_email,
+            status="Pending",
+        )
+        for email in emails
+    ]
+    db.session.add_all(tasks)
+    for email in emails:
+        log_superadmin_action(
+            action="TASK_ASSIGNED",
+            target=email,
+            details=f"title={title}",
+            actor=creator,
+        )
     db.session.commit()
 
-    # Best-effort notification, exactly like the classic route: a mail failure
+    # Best-effort notifications, exactly like the classic route: a mail failure
     # must never fail the assignment itself.
-    email_sent = True
-    try:
-        _send_task_assigned_email(
-            assigned_to_email, title, details, normalize_email(getattr(creator, "email", ""))
-        )
-    except Exception:
-        email_sent = False
-        app.logger.exception("Failed to send task assignment email")
+    emails_failed = []
+    for email in emails:
+        try:
+            _send_task_assigned_email(email, title, details, creator_email)
+        except Exception:
+            emails_failed.append(email)
+            app.logger.exception("Failed to send task assignment email")
 
-    return jsonify({"success": True, "task": _admin_task_dict(task), "email_sent": email_sent}), 201
+    return jsonify({
+        "success": True,
+        "task": _admin_task_dict(tasks[0]),
+        "tasks": [_admin_task_dict(t) for t in tasks],
+        "email_sent": not emails_failed,
+        "emails_failed": emails_failed,
+    }), 201
 
 
 @app.route("/api/admin/tasks/<int:task_id>/status", methods=["PUT"])
