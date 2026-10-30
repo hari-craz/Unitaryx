@@ -6,6 +6,7 @@ import ScrollPanel from '../layout/ScrollPanel';
 import HeroVisual from './HeroVisual';
 import { EASE_OUT } from '../../lib/motion';
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
+import { useAbTest } from '../../hooks/useAbTest';
 import './Hero.css';
 
 const DISCIPLINES = [
@@ -45,6 +46,7 @@ const rise = (delay, reduceMotion) =>
       };
 
 function HeroContent({ scrollYProgress, reduceMotion }) {
+  const cta = useAbTest('hero_primary_cta', 'Start a project');
   // Hero holds steady while it's the only thing on screen, then eases back
   // and fades as Services starts sliding up to cover it — scroll-scrubbed,
   // not a fixed-duration exit animation.
@@ -82,8 +84,8 @@ function HeroContent({ scrollYProgress, reduceMotion }) {
         hardware — from first prototype to shipped product.
       </motion.p>
       <motion.div className="hero-actions" {...rise(1.3, reduceMotion)}>
-        <MagneticButton as="a" href="#contact">
-          Start a project
+        <MagneticButton as="a" href="#contact" onClick={cta.convert}>
+          {cta.text}
         </MagneticButton>
         <a className="hero-secondary-link" href="#projects">
           See our work →

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getJSON, postJSON } from '../../lib/api';
 import MagneticButton from '../common/MagneticButton';
+import { useAbTest } from '../../hooks/useAbTest';
 import './NavBar.css';
 
 async function logout() {
@@ -24,6 +25,7 @@ const LINKS = [
 ];
 
 export default function NavBar() {
+  const cta = useAbTest('hire_cta', 'Start a project');
   const [session, setSession] = useState({ loading: true, authenticated: false, user: null });
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -78,8 +80,8 @@ export default function NavBar() {
         </nav>
 
         <div className="nav-actions">
-          <MagneticButton as="a" href="/#contact" className="nav-primary-cta">
-            Start a project
+          <MagneticButton as="a" href="/#contact" className="nav-primary-cta" onClick={cta.convert}>
+            {cta.text}
           </MagneticButton>
           {authAction}
           <button

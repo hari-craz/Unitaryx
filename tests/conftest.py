@@ -18,6 +18,7 @@ for _name in ("SMTP_USER", "SMTP_PASS", "SMTP_FROM", "CELERY_BROKER_URL", "CELER
     os.environ[_name] = ""
 
 from backend.app import (  # noqa: E402  (must import after env vars are set)
+    ABTestEvent,
     app as flask_app,
     db,
     AdminTask,
@@ -35,6 +36,7 @@ def _clean_tables():
     with flask_app.app_context():
         Founder.query.delete()
         Project.query.delete()
+        ABTestEvent.query.delete()
         ProjectRequest.query.delete()
         AdminTask.query.delete()
         FinanceEntry.query.delete()
