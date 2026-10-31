@@ -1,4 +1,5 @@
 import os
+from email import policy as email_policy
 from email.message import EmailMessage
 import ssl
 import smtplib
@@ -24,6 +25,22 @@ if CELERY_BROKER:
     celery.conf.task_ignore_result = True
     celery.conf.broker_connection_retry_on_startup = False
     celery.conf.broker_connection_max_retries = 0
+
+
+def build_message(subject, sender, recipient, text_body, html_body=None, headers=None):
+    """Build the outgoing message. Extra headers (List-Unsubscribe) are long URLs;
+    under the default 78-column policy Python RFC-2047-encodes them, which mail
+    apps cannot read. The RFC maximum of 998 keeps them as plain text."""
+    msg = EmailMessage(policy=email_policy.default.clone(max_line_length=998)) if headers else EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = recipient
+    for name, value in (headers or {}).items():
+        msg[name] = value
+    msg.set_content(text_body)
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
+    return msg
 
 
 def _smtp_send_message_local(msg: EmailMessage):
@@ -63,25 +80,11 @@ def _smtp_send_message_local(msg: EmailMessage):
 
 if celery:
     @celery.task(name="unitaryx.send_email", ignore_result=True)
-    def send_email_task(subject, sender, recipient, text_body, html_body=None):
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = sender
-        msg["To"] = recipient
-        msg.set_content(text_body)
-        if html_body:
-            msg.add_alternative(html_body, subtype="html")
-        _smtp_send_message_local(msg)
+    def send_email_task(subject, sender, recipient, text_body, html_body=None, headers=None):
+        _smtp_send_message_local(build_message(subject, sender, recipient, text_body, html_body, headers))
 
     # export task reference
     send_email = send_email_task
 else:
-    def send_email(subject, sender, recipient, text_body, html_body=None):
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = sender
-        msg["To"] = recipient
-        msg.set_content(text_body)
-        if html_body:
-            msg.add_alternative(html_body, subtype="html")
-        _smtp_send_message_local(msg)
+    def send_email(subject, sender, recipient, text_body, html_body=None, headers=None):
+        _smtp_send_message_local(build_message(subject, sender, recipient, text_body, html_body, headers))

@@ -10,11 +10,12 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename, safe_join
 from datetime import datetime, timedelta
 from functools import wraps
-import os, re, urllib.parse, random, smtplib, ssl, csv, json, hashlib, uuid, secrets
+import os, re, urllib.parse, random, smtplib, ssl, csv, json, hashlib, uuid, secrets, threading, time
 from io import StringIO
 from email.message import EmailMessage
 from .mailers import (send_welcome_email as queue_welcome_email, send_assigned_email as queue_assigned_email,
-                      send_newsletter_confirm_email as queue_newsletter_confirm_email)
+                      send_newsletter_confirm_email as queue_newsletter_confirm_email,
+                      build_newsletter_payload, send_newsletter_message)
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
@@ -505,6 +506,43 @@ class Subscriber(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     confirmed_at = db.Column(db.DateTime)
     last_sent_at = db.Column(db.DateTime)
+
+
+class Newsletter(db.Model):
+    """A newsletter written in the admin studio. Drafts are editable; once sent
+    the content is kept as a record of what went out."""
+    __tablename__ = 'newsletters'
+
+    id = db.Column(db.Integer, primary_key=True)
+    subject = db.Column(db.String(150), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    cta_label = db.Column(db.String(40))
+    cta_url = db.Column(db.String(300))
+    status = db.Column(db.String(12), nullable=False, default='draft', index=True)  # draft | sending | sent
+    created_by = db.Column(db.String(150), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    sent_at = db.Column(db.DateTime)
+    recipients_total = db.Column(db.Integer, default=0, nullable=False)
+    sent_count = db.Column(db.Integer, default=0, nullable=False)
+    failed_count = db.Column(db.Integer, default=0, nullable=False)
+    skipped_count = db.Column(db.Integer, default=0, nullable=False)
+
+
+class NewsletterDelivery(db.Model):
+    """One row per recipient of a sent newsletter. Recipients are fixed when the
+    send starts, so an interrupted send can resume without mailing anyone twice."""
+    __tablename__ = 'newsletter_deliveries'
+    __table_args__ = (
+        db.UniqueConstraint('newsletter_id', 'email', name='uq_newsletter_delivery'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    newsletter_id = db.Column(db.Integer, db.ForeignKey('newsletters.id'), nullable=False, index=True)
+    email = db.Column(db.String(150), nullable=False)
+    status = db.Column(db.String(10), nullable=False, default='pending')  # pending | sent | failed | skipped
+    error = db.Column(db.String(200))
+    sent_at = db.Column(db.DateTime)
 
 
 class PublicFeedback(db.Model):
@@ -2864,6 +2902,20 @@ def _subscriber_by_token(column, token):
     return Subscriber.query.filter(column == token).first()
 
 
+@app.route("/newsletter/unsubscribe/<token>", methods=["POST"])
+@csrf.exempt
+@limiter.limit("30 per hour", methods=["POST"])
+def newsletter_one_click_unsubscribe(token):
+    """Target of the List-Unsubscribe header: mail apps POST here when someone
+    taps their own Unsubscribe button. The emailed link itself (a GET) only shows
+    a page, so link scanners cannot unsubscribe anyone."""
+    sub = _subscriber_by_token(Subscriber.unsub_token, token)
+    if sub:
+        db.session.delete(sub)
+        db.session.commit()
+    return ("", 200)
+
+
 @app.route("/api/newsletter/confirm", methods=["POST"])
 @csrf.exempt
 @limiter.limit("30 per hour", methods=["POST"])
@@ -2914,6 +2966,477 @@ def api_admin_newsletter_export():
     resp.headers["Content-Type"] = "text/csv; charset=utf-8"
     resp.headers["Content-Disposition"] = "attachment; filename=newsletter_subscribers.csv"
     return resp
+
+
+# ─── Admin newsletter: subscribers ─────────────────────────────────────────────
+
+SUBSCRIBERS_PER_PAGE = 25
+
+
+def _subscriber_dict(sub):
+    # Tokens are deliberately never exposed.
+    return {
+        "id": sub.id,
+        "email": sub.email,
+        "confirmed": bool(sub.confirmed),
+        "created_at": sub.created_at.isoformat() if sub.created_at else None,
+        "confirmed_at": sub.confirmed_at.isoformat() if sub.confirmed_at else None,
+    }
+
+
+@app.route("/api/admin/newsletter/subscribers")
+@api_superadmin_required
+def api_admin_newsletter_subscribers():
+    status = (request.args.get("status") or "all").strip().lower()
+    term = (request.args.get("q") or "").strip().lower()[:100]
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+
+    query = Subscriber.query
+    if status == "confirmed":
+        query = query.filter(Subscriber.confirmed.is_(True))
+    elif status == "pending":
+        query = query.filter(Subscriber.confirmed.is_(False))
+    if term:
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.filter(db.func.lower(Subscriber.email).like(f"%{escaped}%", escape="\\"))
+
+    total = query.count()
+    rows = (
+        query.order_by(Subscriber.created_at.desc(), Subscriber.id.desc())
+        .offset((page - 1) * SUBSCRIBERS_PER_PAGE)
+        .limit(SUBSCRIBERS_PER_PAGE)
+        .all()
+    )
+    return jsonify({
+        "subscribers": [_subscriber_dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "per_page": SUBSCRIBERS_PER_PAGE,
+        "confirmed": Subscriber.query.filter_by(confirmed=True).count(),
+        "pending": Subscriber.query.filter_by(confirmed=False).count(),
+    })
+
+
+def _claim_confirmation_resend(sub):
+    """Move last_sent_at forward atomically so the resend cooldown holds."""
+    now = datetime.utcnow()
+    claimed = Subscriber.query.filter(
+        Subscriber.id == sub.id,
+        Subscriber.confirmed.is_(False),
+        or_(Subscriber.last_sent_at.is_(None), Subscriber.last_sent_at < now - NEWSLETTER_RESEND_COOLDOWN),
+    ).update({"last_sent_at": now}, synchronize_session=False)
+    db.session.commit()
+    return bool(claimed)
+
+
+@app.route("/api/admin/newsletter/subscribers", methods=["POST"])
+@api_superadmin_required
+@limiter.limit("60 per hour", methods=["POST"])
+def api_admin_newsletter_subscriber_add():
+    """Invite an address. It is stored as pending and gets the normal
+    confirmation email; nobody can be marked confirmed from here, so every
+    subscriber has opted in themselves."""
+    email = normalize_email(request_payload().get("email"))
+    if not email or len(email) > 150 or not NEWSLETTER_EMAIL_RE.match(email):
+        return jsonify({"success": False, "message": "Enter a valid email address."}), 400
+
+    sub = Subscriber.query.filter_by(email=email).first()
+    if sub and sub.confirmed:
+        return jsonify({"success": False, "message": "That address is already subscribed."}), 409
+
+    if sub is None:
+        sub = Subscriber(
+            email=email,
+            confirm_token=secrets.token_urlsafe(32),
+            unsub_token=secrets.token_urlsafe(32),
+            last_sent_at=datetime.utcnow(),
+        )
+        db.session.add(sub)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({"success": False, "message": "That address was just added."}), 409
+    elif not _claim_confirmation_resend(sub):
+        return jsonify({
+            "success": False,
+            "message": "A confirmation email was sent to this address recently. Try again in a few minutes.",
+        }), 429
+
+    email_sent = True
+    try:
+        _send_newsletter_confirmation(sub)
+    except Exception:
+        email_sent = False
+        app.logger.exception("Newsletter confirmation email failed")
+        Subscriber.query.filter_by(id=sub.id).update({"last_sent_at": None}, synchronize_session=False)
+        db.session.commit()
+
+    log_superadmin_action(action="SUBSCRIBER_INVITED", target=email, actor=current_user())
+    db.session.commit()
+    return jsonify({"success": True, "subscriber": _subscriber_dict(sub), "email_sent": email_sent}), 201
+
+
+@app.route("/api/admin/newsletter/subscribers/<int:sub_id>/resend", methods=["POST"])
+@api_superadmin_required
+@limiter.limit("60 per hour", methods=["POST"])
+def api_admin_newsletter_subscriber_resend(sub_id):
+    sub = db.session.get(Subscriber, sub_id)
+    if not sub:
+        return jsonify({"success": False, "message": "Subscriber not found."}), 404
+    if sub.confirmed:
+        return jsonify({"success": False, "message": "This subscriber has already confirmed."}), 409
+    if not _claim_confirmation_resend(sub):
+        return jsonify({
+            "success": False,
+            "message": "A confirmation email was sent to this address recently. Try again in a few minutes.",
+        }), 429
+    try:
+        _send_newsletter_confirmation(sub)
+    except Exception:
+        app.logger.exception("Newsletter confirmation email failed")
+        Subscriber.query.filter_by(id=sub.id).update({"last_sent_at": None}, synchronize_session=False)
+        db.session.commit()
+        return jsonify({"success": False, "message": "The confirmation email could not be sent."}), 502
+    return jsonify({"success": True})
+
+
+@app.route("/api/admin/newsletter/subscribers/<int:sub_id>", methods=["DELETE"])
+@api_superadmin_required
+@limiter.limit("120 per hour", methods=["DELETE"])
+def api_admin_newsletter_subscriber_delete(sub_id):
+    sub = db.session.get(Subscriber, sub_id)
+    if not sub:
+        return jsonify({"success": False, "message": "Subscriber not found."}), 404
+    email = sub.email
+    db.session.delete(sub)
+    log_superadmin_action(action="SUBSCRIBER_REMOVED", target=email, actor=current_user())
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+# ─── Admin newsletter: writing and sending ─────────────────────────────────────
+
+# A free Gmail account allows about 500 recipients a day, and other mail (OTP,
+# welcome, confirmations) shares it; going over can lock the account. Raise this
+# only when SMTP points at a provider that allows more.
+NEWSLETTER_MAX_RECIPIENTS = int(os.getenv("NEWSLETTER_MAX_RECIPIENTS", "400"))
+NEWSLETTER_SEND_DELAY = float(os.getenv("NEWSLETTER_SEND_DELAY", "0.5"))
+NEWSLETTER_STALE_AFTER = timedelta(seconds=90)
+NEWSLETTER_BACKGROUND = True  # tests turn this off so sends run inline
+_newsletter_active = set()
+_newsletter_lock = threading.Lock()
+
+
+def _newsletter_dict(nl, include_body=False):
+    data = {
+        "id": nl.id,
+        "subject": nl.subject,
+        "status": nl.status,
+        "created_by": nl.created_by,
+        "created_at": nl.created_at.isoformat() if nl.created_at else None,
+        "updated_at": nl.updated_at.isoformat() if nl.updated_at else None,
+        "sent_at": nl.sent_at.isoformat() if nl.sent_at else None,
+        "recipients_total": nl.recipients_total or 0,
+        "sent_count": nl.sent_count or 0,
+        "failed_count": nl.failed_count or 0,
+        "skipped_count": nl.skipped_count or 0,
+        "stalled": _newsletter_is_stalled(nl),
+    }
+    if include_body:
+        data.update({"body": nl.body, "cta_label": nl.cta_label or "", "cta_url": nl.cta_url or ""})
+    return data
+
+
+def _newsletter_is_stalled(nl):
+    """A send whose worker died (restart, crash) stops updating the row."""
+    if nl.status != "sending" or nl.id in _newsletter_active or not nl.updated_at:
+        return False
+    return datetime.utcnow() - nl.updated_at > NEWSLETTER_STALE_AFTER
+
+
+def _newsletter_fields(data, partial=False):
+    out = {}
+    if not partial or "subject" in data:
+        subject = str(data.get("subject", "")).strip()
+        if "\r" in subject or "\n" in subject:
+            raise ValueError("The subject must be a single line.")
+        if len(subject) < 3 or len(subject) > 150:
+            raise ValueError("The subject must be between 3 and 150 characters.")
+        out["subject"] = subject
+    if not partial or "body" in data:
+        body = str(data.get("body", "")).replace("\r\n", "\n").strip()
+        if len(body) < 20 or len(body) > 20000:
+            raise ValueError("The message must be between 20 and 20,000 characters.")
+        out["body"] = body
+    if not partial or "cta_label" in data or "cta_url" in data:
+        label = str(data.get("cta_label", "") or "").strip()
+        url = str(data.get("cta_url", "") or "").strip()
+        if bool(label) != bool(url):
+            raise ValueError("A button needs both a label and a link, or neither.")
+        if label and len(label) > 40:
+            raise ValueError("The button label must be 40 characters or fewer.")
+        out["cta_label"] = label or None
+        out["cta_url"] = _clean_website_url(url) if url else None
+    return out
+
+
+def _newsletter_sender():
+    smtp_user = (os.getenv("SMTP_USER") or "").strip()
+    sender = (os.getenv("SMTP_FROM") or smtp_user).strip()
+    if not sender or not smtp_user or not (os.getenv("SMTP_PASS") or "").strip():
+        return ""
+    return sender
+
+
+def _unsubscribe_url(sub):
+    return f"{resolved_app_url().rstrip('/')}/newsletter/unsubscribe/{sub.unsub_token}"
+
+
+def _render_newsletter(nl_or_fields, unsubscribe_url):
+    get = (lambda k: nl_or_fields.get(k)) if isinstance(nl_or_fields, dict) else (lambda k: getattr(nl_or_fields, k))
+    return build_newsletter_payload(
+        subject=get("subject"),
+        body=get("body"),
+        unsubscribe_url=unsubscribe_url,
+        cta_label=get("cta_label"),
+        cta_url=get("cta_url"),
+        locale=os.getenv("MAIL_LOCALE", "en"),
+    )
+
+
+def _refresh_newsletter_counts(nl):
+    counts = dict(
+        db.session.query(NewsletterDelivery.status, db.func.count(NewsletterDelivery.id))
+        .filter(NewsletterDelivery.newsletter_id == nl.id)
+        .group_by(NewsletterDelivery.status)
+        .all()
+    )
+    nl.sent_count = int(counts.get("sent", 0))
+    nl.failed_count = int(counts.get("failed", 0))
+    nl.skipped_count = int(counts.get("skipped", 0))
+
+
+def _run_newsletter_send(newsletter_id):
+    """Deliver every pending recipient of a newsletter, one at a time. Safe to
+    call again for the same newsletter: only pending rows are processed."""
+    with _newsletter_lock:
+        if newsletter_id in _newsletter_active:
+            return
+        _newsletter_active.add(newsletter_id)
+    try:
+        with app.app_context():
+            nl = db.session.get(Newsletter, newsletter_id)
+            sender = _newsletter_sender()
+            while nl and True:
+                batch = (
+                    NewsletterDelivery.query.filter_by(newsletter_id=newsletter_id, status="pending")
+                    .order_by(NewsletterDelivery.id.asc()).limit(20).all()
+                )
+                if not batch:
+                    break
+                for delivery in batch:
+                    # Someone may have unsubscribed since the send started.
+                    sub = Subscriber.query.filter_by(email=delivery.email, confirmed=True).first()
+                    if not sub:
+                        delivery.status = "skipped"
+                    else:
+                        try:
+                            url = _unsubscribe_url(sub)
+                            subject, plain, html = _render_newsletter(nl, url)
+                            if not sender:
+                                raise RuntimeError("Email is not configured")
+                            send_newsletter_message(sub.email, subject, plain, html, sender, url)
+                            delivery.status = "sent"
+                            delivery.sent_at = datetime.utcnow()
+                        except Exception as exc:
+                            app.logger.exception("Newsletter delivery failed")
+                            delivery.status = "failed"
+                            delivery.error = f"{type(exc).__name__}"[:200]
+                    _refresh_newsletter_counts(nl)
+                    nl.updated_at = datetime.utcnow()  # heartbeat for stall detection
+                    db.session.commit()
+                    if NEWSLETTER_SEND_DELAY:
+                        time.sleep(NEWSLETTER_SEND_DELAY)
+            if nl:
+                _refresh_newsletter_counts(nl)
+                nl.status = "sent"
+                nl.sent_at = datetime.utcnow()
+                db.session.commit()
+    except Exception:
+        app.logger.exception("Newsletter send aborted; it can be resumed from the admin studio")
+    finally:
+        with _newsletter_lock:
+            _newsletter_active.discard(newsletter_id)
+
+
+def _start_newsletter_worker(newsletter_id):
+    if NEWSLETTER_BACKGROUND:
+        threading.Thread(target=_run_newsletter_send, args=(newsletter_id,), daemon=True).start()
+    else:
+        _run_newsletter_send(newsletter_id)
+
+
+@app.route("/api/admin/newsletter/campaigns")
+@api_superadmin_required
+def api_admin_newsletter_campaigns():
+    rows = Newsletter.query.order_by(Newsletter.created_at.desc(), Newsletter.id.desc()).limit(100).all()
+    return jsonify({
+        "campaigns": [_newsletter_dict(n) for n in rows],
+        "confirmed": Subscriber.query.filter_by(confirmed=True).count(),
+        "recipient_limit": NEWSLETTER_MAX_RECIPIENTS,
+        "email_configured": bool(_newsletter_sender()),
+    })
+
+
+@app.route("/api/admin/newsletter/campaigns", methods=["POST"])
+@api_superadmin_required
+@limiter.limit("60 per hour", methods=["POST"])
+def api_admin_newsletter_campaign_create():
+    fields = _newsletter_fields(request_payload())
+    nl = Newsletter(created_by=normalize_email(getattr(current_user(), "email", "")), **fields)
+    db.session.add(nl)
+    db.session.commit()
+    return jsonify({"success": True, "campaign": _newsletter_dict(nl, include_body=True)}), 201
+
+
+@app.route("/api/admin/newsletter/campaigns/preview", methods=["POST"])
+@api_superadmin_required
+@limiter.limit("240 per hour", methods=["POST"])
+def api_admin_newsletter_preview():
+    fields = _newsletter_fields(request_payload())
+    _subject, _plain, html = _render_newsletter(fields, "#")
+    return jsonify({"success": True, "html": html})
+
+
+@app.route("/api/admin/newsletter/campaigns/<int:nl_id>")
+@api_superadmin_required
+def api_admin_newsletter_campaign_get(nl_id):
+    nl = db.session.get(Newsletter, nl_id)
+    if not nl:
+        return jsonify({"success": False, "message": "Newsletter not found."}), 404
+    return jsonify({"success": True, "campaign": _newsletter_dict(nl, include_body=True)})
+
+
+@app.route("/api/admin/newsletter/campaigns/<int:nl_id>", methods=["PUT"])
+@api_superadmin_required
+@limiter.limit("240 per hour", methods=["PUT"])
+def api_admin_newsletter_campaign_update(nl_id):
+    nl = db.session.get(Newsletter, nl_id)
+    if not nl:
+        return jsonify({"success": False, "message": "Newsletter not found."}), 404
+    if nl.status != "draft":
+        return jsonify({"success": False, "message": "Only drafts can be edited."}), 409
+    for key, value in _newsletter_fields(request_payload(), partial=True).items():
+        setattr(nl, key, value)
+    db.session.commit()
+    return jsonify({"success": True, "campaign": _newsletter_dict(nl, include_body=True)})
+
+
+@app.route("/api/admin/newsletter/campaigns/<int:nl_id>", methods=["DELETE"])
+@api_superadmin_required
+@limiter.limit("60 per hour", methods=["DELETE"])
+def api_admin_newsletter_campaign_delete(nl_id):
+    nl = db.session.get(Newsletter, nl_id)
+    if not nl:
+        return jsonify({"success": False, "message": "Newsletter not found."}), 404
+    if nl.status == "sending" and not _newsletter_is_stalled(nl):
+        return jsonify({"success": False, "message": "This newsletter is being sent right now."}), 409
+    NewsletterDelivery.query.filter_by(newsletter_id=nl.id).delete(synchronize_session=False)
+    db.session.delete(nl)
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@app.route("/api/admin/newsletter/campaigns/<int:nl_id>/test", methods=["POST"])
+@api_superadmin_required
+@limiter.limit("20 per hour", methods=["POST"])
+def api_admin_newsletter_campaign_test(nl_id):
+    """Send the newsletter to the signed-in admin only."""
+    nl = db.session.get(Newsletter, nl_id)
+    if not nl:
+        return jsonify({"success": False, "message": "Newsletter not found."}), 404
+    sender = _newsletter_sender()
+    if not sender:
+        return jsonify({"success": False, "message": "Email is not configured on the server."}), 400
+    recipient = normalize_email(getattr(current_user(), "email", ""))
+    url = f"{resolved_app_url().rstrip('/')}/newsletter/unsubscribe/test-message"
+    try:
+        subject, plain, html = _render_newsletter(nl, url)
+        send_newsletter_message(recipient, f"[Test] {subject}", plain, html, sender, url)
+    except Exception:
+        app.logger.exception("Newsletter test send failed")
+        return jsonify({"success": False, "message": "The test email could not be sent."}), 502
+    return jsonify({"success": True, "sent_to": recipient})
+
+
+@app.route("/api/admin/newsletter/campaigns/<int:nl_id>/send", methods=["POST"])
+@api_superadmin_required
+@limiter.limit("10 per hour", methods=["POST"])
+def api_admin_newsletter_campaign_send(nl_id):
+    nl = db.session.get(Newsletter, nl_id)
+    if not nl:
+        return jsonify({"success": False, "message": "Newsletter not found."}), 404
+    if request_payload().get("confirm") is not True:
+        return jsonify({"success": False, "message": "Sending must be confirmed."}), 400
+    if not _newsletter_sender():
+        return jsonify({"success": False, "message": "Email is not configured on the server."}), 400
+
+    recipients = [
+        row.email for row in Subscriber.query.filter_by(confirmed=True).order_by(Subscriber.id.asc()).all()
+    ]
+    if not recipients:
+        return jsonify({"success": False, "message": "There are no confirmed subscribers to send to."}), 400
+    if len(recipients) > NEWSLETTER_MAX_RECIPIENTS:
+        return jsonify({
+            "success": False,
+            "message": (
+                f"You have {len(recipients)} confirmed subscribers, above the safety limit of "
+                f"{NEWSLETTER_MAX_RECIPIENTS} per send. Raise NEWSLETTER_MAX_RECIPIENTS only if your "
+                "email provider allows that many."
+            ),
+        }), 400
+
+    # Claim the draft atomically so a double click cannot send it twice.
+    claimed = Newsletter.query.filter(
+        Newsletter.id == nl.id, Newsletter.status == "draft"
+    ).update(
+        {"status": "sending", "recipients_total": len(recipients), "sent_count": 0, "failed_count": 0,
+         "skipped_count": 0, "updated_at": datetime.utcnow()},
+        synchronize_session=False,
+    )
+    if not claimed:
+        db.session.rollback()
+        return jsonify({"success": False, "message": "This newsletter has already been sent or is being sent."}), 409
+    db.session.add_all([NewsletterDelivery(newsletter_id=nl.id, email=email) for email in recipients])
+    log_superadmin_action(
+        action="NEWSLETTER_SENT", target=f"newsletter #{nl.id}",
+        details=f"subject={nl.subject}; recipients={len(recipients)}", actor=current_user(),
+    )
+    db.session.commit()
+
+    _start_newsletter_worker(nl.id)
+    db.session.expire_all()
+    return jsonify({"success": True, "recipients": len(recipients),
+                    "campaign": _newsletter_dict(db.session.get(Newsletter, nl.id))}), 202
+
+
+@app.route("/api/admin/newsletter/campaigns/<int:nl_id>/resume", methods=["POST"])
+@api_superadmin_required
+@limiter.limit("20 per hour", methods=["POST"])
+def api_admin_newsletter_campaign_resume(nl_id):
+    """Continue a send whose worker stopped (for example after a restart)."""
+    nl = db.session.get(Newsletter, nl_id)
+    if not nl:
+        return jsonify({"success": False, "message": "Newsletter not found."}), 404
+    if not _newsletter_is_stalled(nl):
+        return jsonify({"success": False, "message": "This send is not stalled."}), 409
+    _start_newsletter_worker(nl.id)
+    db.session.expire_all()
+    return jsonify({"success": True, "campaign": _newsletter_dict(db.session.get(Newsletter, nl.id))}), 202
 
 
 def _clean_int(value, default=0, minimum=-1_000_000, maximum=1_000_000):
