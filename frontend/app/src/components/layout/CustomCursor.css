@@ -57,9 +57,7 @@
   letter-spacing: 0.08em;
 }
 
-@media (max-width: 899px) {
-  .cursor-dot,
-  .cursor-ring {
-    display: none;
-  }
-}
+/* No width-based hiding here on purpose. global.css hides the OS cursor whenever
+   a mouse is present (hover + fine pointer), so hiding this one below some width
+   left narrow or portrait desktop windows with no cursor at all. CustomCursor.jsx
+   only renders for mouse-type pointers, so touch devices never show it. */
