@@ -18,11 +18,16 @@ import './Dashboard.css';
 const DEFAULT_FILTERS = { search: '', status: 'all', sort: 'newest', updatedOnly: false };
 
 export default function Dashboard() {
-  const { user, requests, loading, error } = useDashboard();
+  const { user, requests, loading, error, markSeen } = useDashboard();
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [activeRequest, setActiveRequest] = useState(null);
 
   usePageMeta('Dashboard — Unitary X', { noindex: true });
+
+  const openRequest = (request) => {
+    setActiveRequest(request);
+    if (request.is_updated) markSeen(request.id);
+  };
 
   const counts = useMemo(() => {
     const c = { total: requests.length, New: 0, 'In Progress': 0, Done: 0, updates: 0 };
@@ -108,7 +113,7 @@ export default function Dashboard() {
         <RequestGrid
           requests={filtered}
           isEmpty={requests.length === 0}
-          onOpen={setActiveRequest}
+          onOpen={openRequest}
         />
       </section>
 

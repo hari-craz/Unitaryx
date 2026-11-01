@@ -99,12 +99,36 @@ def test_only_returns_own_requests(customer_client):
     assert "Not mine" not in messages
 
 
-def test_update_flag_is_one_shot(customer_client):
-    _add_request(customer_client.customer_id, is_new_update=True)
-    first = customer_client.get("/api/dashboard/requests").get_json()
-    assert first["requests"][0]["is_updated"] is True
-    second = customer_client.get("/api/dashboard/requests").get_json()
-    assert second["requests"][0]["is_updated"] is False
+def _csrf(client):
+    return {"X-CSRFToken": client.get("/api/csrf-token").get_json()["token"]}
+
+
+def test_update_flag_survives_reloads_until_the_request_is_opened(customer_client):
+    req_id = _add_request(customer_client.customer_id, is_new_update=True)
+    for _ in range(3):  # a refresh or a double fetch must not hide the update
+        body = customer_client.get("/api/dashboard/requests").get_json()
+        assert body["requests"][0]["is_updated"] is True
+
+    resp = customer_client.post(f"/api/dashboard/requests/{req_id}/seen", headers=_csrf(customer_client))
+    assert resp.status_code == 200
+    body = customer_client.get("/api/dashboard/requests").get_json()
+    assert body["requests"][0]["is_updated"] is False
+
+
+def test_marking_seen_only_works_on_your_own_requests(customer_client):
+    other_id = _make_customer("other@example.com", "Other")
+    foreign = _add_request(other_id, email="other@example.com", is_new_update=True)
+    resp = customer_client.post(f"/api/dashboard/requests/{foreign}/seen", headers=_csrf(customer_client))
+    assert resp.status_code == 404
+    with flask_app.app_context():
+        assert db.session.get(ProjectRequest, foreign).is_new_update is True
+
+
+def test_marking_seen_requires_login_and_csrf(client, customer_client):
+    req_id = _add_request(customer_client.customer_id, is_new_update=True)
+    assert customer_client.post(f"/api/dashboard/requests/{req_id}/seen").status_code == 403
+    anonymous = flask_app.test_client()
+    assert anonymous.post(f"/api/dashboard/requests/{req_id}/seen").status_code in (401, 403)
 
 
 def test_returns_first_name(customer_client):

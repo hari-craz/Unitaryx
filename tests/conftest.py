@@ -13,7 +13,8 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ["UNITARYX_SKIP_DOTENV_WALKUP"] = "1"
 # The repo-root .env is still loaded; blank mail/broker settings so tests never
 # reach live SMTP or a Redis broker (an empty value wins over load_dotenv).
-os.environ["RATELIMIT_STORAGE_URI"] = "memory://"  # never share a Redis limiter store with tests
+os.environ["RATELIMIT_STORAGE_URI"] = "memory://"
+os.environ["TRUSTED_PROXY_HOPS"] = "1"  # one proxy in front, so tests do not depend on a local .env  # never share a Redis limiter store with tests
 for _name in ("SMTP_USER", "SMTP_PASS", "SMTP_FROM", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"):
     os.environ[_name] = ""
 

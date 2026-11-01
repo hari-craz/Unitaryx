@@ -69,7 +69,12 @@ app = Flask(
     static_folder=os.path.join(PROJECT_ROOT, "frontend", "static"),
 )
 # Respect original scheme/host when running behind reverse proxies (NPM/Traefik).
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_port=1)
+# TRUSTED_PROXY_HOPS is how many reverse proxies sit in front of the app (for
+# example 1 for Nginx Proxy Manager alone, 2 for Cloudflare in front of it). The
+# client address is taken that many entries from the right of X-Forwarded-For, so
+# a visitor cannot choose it and each visitor gets their own rate-limit bucket.
+_PROXY_HOPS = max(0, int(os.getenv("TRUSTED_PROXY_HOPS", "1") or 0))
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_PROXY_HOPS, x_proto=1, x_host=1, x_port=1)
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
@@ -237,7 +242,8 @@ csp = {
         'https://use.fontawesome.com',
         'https://cdn.jsdelivr.net',
     ],
-    'img-src': ['\'self\'', 'data:', '*', 'https://www.google.com', 'https://translate.googleapis.com'],
+    # Photos are uploaded here or linked by https URL; plain http and other schemes are refused.
+    'img-src': ['\'self\'', 'data:', 'https:'],
     'media-src': ['\'self\'', 'https://cdn.pixabay.com', 'data:', '*'],
     # Vite inlines small font files as data: URIs; without this they are blocked.
     'font-src': [
@@ -1032,7 +1038,20 @@ def end_current_session():
     session.clear()
 
 
-def _parse_deadline_days(deadline_value):
+_RELATIVE_DEADLINE_RE = re.compile(
+    r"^(?:in|within|about|around|approx\.?|approximately)?\s*(\d{1,4}(?:\.\d+)?)\s*"
+    r"(days?|d|weeks?|wks?|w|months?|mos?)\b",
+    re.IGNORECASE,
+)
+_URGENT_DEADLINE_RE = re.compile(r"\b(asap|urgent|urgently|immediately|right away|today|tomorrow)\b", re.IGNORECASE)
+
+
+def _parse_deadline_days(deadline_value, created_at=None):
+    """Days left until the deadline, or None if it cannot be understood.
+
+    Accepts a date ("2026-12-01", "01/12/2026") or what the form's placeholder
+    suggests ("6 weeks", "2 months", "10 days", "ASAP"). A relative deadline is
+    counted from when the request was made, so it shrinks as time passes."""
     raw = (deadline_value or "").strip()
     if not raw:
         return None
@@ -1044,6 +1063,18 @@ def _parse_deadline_days(deadline_value):
             return (target - datetime.utcnow().date()).days
         except ValueError:
             continue
+
+    elapsed = max(0, (datetime.utcnow() - created_at).days) if created_at else 0
+
+    match = _RELATIVE_DEADLINE_RE.match(raw)
+    if match:
+        amount = float(match.group(1))
+        unit = match.group(2).lower()
+        per_unit = 1 if unit.startswith("d") else (7 if unit.startswith("w") else 30)
+        return int(round(amount * per_unit)) - elapsed
+
+    if _URGENT_DEADLINE_RE.search(raw):
+        return 1 - elapsed
     return None
 
 
@@ -1063,7 +1094,7 @@ def _score_project_request(req):
     priority_text = (req.priority or "Medium").strip().lower()
     priority_base = {"high": 80, "medium": 55, "low": 30}.get(priority_text, 50)
     urgency_bonus = 0
-    days_to_deadline = _parse_deadline_days(req.deadline)
+    days_to_deadline = _parse_deadline_days(req.deadline, req.created_at)
     if days_to_deadline is not None:
         if days_to_deadline <= 2:
             urgency_bonus = 20
@@ -1168,12 +1199,9 @@ def _apply_stale_followup_policy(rows):
 
 
 def _extract_client_ip():
-    forwarded = (request.headers.get("X-Forwarded-For") or "").strip()
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    real_ip = (request.headers.get("X-Real-IP") or "").strip()
-    if real_ip:
-        return real_ip
+    # ProxyFix (TRUSTED_PROXY_HOPS) has already resolved the real client from
+    # X-Forwarded-For using only the entries our own proxies added. Reading the
+    # header or X-Real-IP directly would trust whatever the visitor sent.
     return (request.remote_addr or "").strip()
 
 
@@ -2541,6 +2569,17 @@ def user_dashboard():
     return send_from_directory(DIST_DIR, "index.html")
 
 
+def _customer_requests(user):
+    """The signed-in customer's own requests. Email matching is only trusted for
+    Google sign-ins (verified email); password accounts are unverified, so they
+    see only requests linked by id."""
+    normalized_email = (user.email or "").strip().lower()
+    conditions = [ProjectRequest.user_id == user.id]
+    if session.get("auth_provider") == "google":
+        conditions.append(db.func.lower(ProjectRequest.email) == normalized_email)
+    return ProjectRequest.query.filter(db.or_(*conditions))
+
+
 def _customer_request_dict(req, is_updated):
     """Customer-safe serialization of a ProjectRequest. Deliberately excludes
     internal_notes and every lead_score_* / lead_tier / escalation_level field
@@ -2562,29 +2601,30 @@ def _customer_request_dict(req, is_updated):
 @api_login_required
 def api_dashboard_requests():
     user = current_user()
-    normalized_email = (user.email or "").strip().lower()
-    # Email matching is only trusted for Google sign-ins (verified email);
-    # password accounts are unverified, so they see only requests linked by id.
-    conditions = [ProjectRequest.user_id == user.id]
-    if session.get("auth_provider") == "google":
-        conditions.append(db.func.lower(ProjectRequest.email) == normalized_email)
-    my_requests = ProjectRequest.query.filter(db.or_(*conditions)).order_by(ProjectRequest.created_at.desc()).all()
+    my_requests = _customer_requests(user).order_by(ProjectRequest.created_at.desc()).all()
 
-    active_updates = {r.id for r in my_requests if r.is_new_update}
-
-    # One-shot "updates" semantics preserved from the old route: flag which rows
-    # were newly updated this load, then clear the flags.
-    if active_updates:
-        for req in my_requests:
-            if req.is_new_update:
-                req.is_new_update = False
-        db.session.commit()
-
+    # Loading the list must not clear the "updated" flag: a refresh (or React
+    # StrictMode's double fetch) would hide the update before the customer saw
+    # it. It is cleared when they open the request (see the /seen route).
     first_name = (user.name or "").strip().split(" ")[0] if user.name else ""
     return jsonify({
         "user": {"name": user.name, "first_name": first_name},
-        "requests": [_customer_request_dict(r, r.id in active_updates) for r in my_requests],
+        "requests": [_customer_request_dict(r, bool(r.is_new_update)) for r in my_requests],
     })
+
+
+@app.route("/api/dashboard/requests/<int:req_id>/seen", methods=["POST"])
+@api_login_required
+@limiter.limit("300 per hour", methods=["POST"])
+def api_dashboard_request_seen(req_id):
+    """The customer opened this request, so its "updated" flag can clear."""
+    req = _customer_requests(current_user()).filter(ProjectRequest.id == req_id).first()
+    if not req:
+        return jsonify({"success": False, "message": "Request not found."}), 404
+    if req.is_new_update:
+        req.is_new_update = False
+        db.session.commit()
+    return jsonify({"success": True})
 
 
 # ─── API — Contact Form ───────────────────────────────────────────────────────
@@ -3582,7 +3622,7 @@ def api_admin_founders_create():
         photo_url=_clean_photo_url(data.get("photo_url")),
         socials=_clean_socials(data.get("socials")),
         display_order=_clean_int(data.get("display_order"), max_order + 1),
-        active=bool(data.get("active", True)),
+        active=_clean_bool(data.get("active")),
     )
     db.session.add(founder)
     db.session.commit()
@@ -3618,7 +3658,7 @@ def api_admin_founders_update(founder_id):
     if "display_order" in data:
         founder.display_order = _clean_int(data.get("display_order"))
     if "active" in data:
-        founder.active = bool(data.get("active"))
+        founder.active = _clean_bool(data.get("active"))
 
     db.session.commit()
     if old_photo and old_photo != founder.photo_url:
@@ -3825,7 +3865,7 @@ def api_admin_projects_create():
         rating=_clean_rating(data.get("rating")),
         icon=str(data.get("icon", "")).strip() or None,
         bg_class=str(data.get("bg_class", "")).strip() or None,
-        featured=bool(data.get("featured", False)),
+        featured=_clean_bool(data.get("featured"), default=False),
         display_order=_clean_int(data.get("display_order"), max_order + 1),
         photo_url=_clean_photo_url(data.get("photo_url")),
         problem=_clean_case_text(data.get("problem")),
@@ -3878,7 +3918,7 @@ def api_admin_projects_update(project_id):
     if "bg_class" in data:
         project.bg_class = str(data.get("bg_class", "")).strip() or None
     if "featured" in data:
-        project.featured = bool(data.get("featured"))
+        project.featured = _clean_bool(data.get("featured"), default=False)
     if "display_order" in data:
         project.display_order = _clean_int(data.get("display_order"))
     old_photo = project.photo_url
@@ -4025,7 +4065,7 @@ def api_track_page_view():
         visitor_id,
         max_age=60 * 60 * 24 * 365,
         samesite="Lax",
-        secure=False,
+        secure=request.is_secure,
         httponly=False,
     )
     return response
@@ -4049,7 +4089,7 @@ def api_track_scroll():
         visitor_id,
         max_age=60 * 60 * 24 * 365,
         samesite="Lax",
-        secure=False,
+        secure=request.is_secure,
         httponly=False,
     )
     return response
@@ -4343,7 +4383,7 @@ def resolve_ab_tests():
         'visitor_id': visitor_id,
         'assignments': assignments,
     })
-    res.set_cookie('ux_vid', visitor_id, max_age=86400 * 180, samesite='Lax')
+    res.set_cookie('ux_vid', visitor_id, max_age=86400 * 180, samesite='Lax', secure=request.is_secure)
     return res
 
 
@@ -5841,7 +5881,7 @@ if __name__ == "__main__":
         print("="*58 + "\n")
     app.run(
         host='0.0.0.0',
-        debug=os.getenv("DEBUG", "True") == "True",
+        debug=(os.getenv("DEBUG", "False").strip().lower() == "true"),
         port=int(os.getenv("PORT", 10003))
     )
 

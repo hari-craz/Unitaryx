@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { getJSON } from '../lib/api';
+import { useCallback, useEffect, useState } from 'react';
+import { getJSON, postJSON } from '../lib/api';
 
 export function useDashboard() {
   const [data, setData] = useState({ user: null, requests: [] });
@@ -23,5 +23,15 @@ export function useDashboard() {
     };
   }, []);
 
-  return { ...data, loading, error };
+  // Opening a request is what clears its "updated" flag, so a refresh never
+  // hides an update the customer has not looked at yet.
+  const markSeen = useCallback((id) => {
+    setData((d) => ({
+      ...d,
+      requests: d.requests.map((r) => (r.id === id ? { ...r, is_updated: false } : r)),
+    }));
+    postJSON(`/api/dashboard/requests/${id}/seen`, {}).catch(() => {});
+  }, []);
+
+  return { ...data, loading, error, markSeen };
 }
